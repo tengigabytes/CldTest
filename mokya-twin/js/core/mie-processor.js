@@ -46,6 +46,29 @@ export const CompositionState = Object.freeze({
   SELECTING: 'SELECTING',  // Browsing candidate list
 });
 
+/**
+ * English multi-tap map — key.fn → Latin characters (Nokia T9-style).
+ * 26 letters distributed across 16 Zhuyin character keys.
+ */
+const ENGLISH_CHARS = {
+  BP:      ['a', 'b'],
+  MF:      ['c', 'd'],
+  DT:      ['e', 'f'],
+  NL:      ['g', 'h'],
+  GK:      ['i', 'j'],
+  HJ:      ['k', 'l'],
+  QX:      ['m', 'n'],
+  ZHCH:    ['o', 'p'],
+  SHR:     ['q', 'r'],
+  ZCS:     ['s', 't'],
+  IUY:     ['u', 'v'],
+  AOEH:    ['w', 'x'],
+  EAIEI:   ['y', 'z'],
+  AOUANG:  ['1', '2', '3'],
+  ENANGEN: ['4', '5', '6'],
+  ERNN:    ['7', '8', '9', '0'],
+};
+
 /** Which phoneme category a symbol belongs to */
 const PHONEME_CATEGORY = {
   // Initials (聲母)
@@ -246,6 +269,13 @@ export class MIE_Processor extends EventTarget {
     return [this.compBuffer.join('')];
   }
 
+  /** Select candidate at absolute index and commit immediately. */
+  selectCandidateAt(idx) {
+    if (idx < 0 || idx >= this.candidates.length) return;
+    this.candidateIdx = idx;
+    this._confirmCandidate();
+  }
+
   _confirmCandidate() {
     this._timer.cancelAlarm(this._autoCommitTimer);
     if (this.compBuffer.length === 0) return;
@@ -262,10 +292,10 @@ export class MIE_Processor extends EventTarget {
   // ── English / Numeric input ───────────────────────────────────
 
   _handleEnglishKey(key, tapCount) {
-    // In English mode, multi-tap cycles through a–z mappings on Zhuyin keys
-    // This is a Phase 2 feature; Phase 1 just logs
-    const charIdx = (tapCount - 1) % Math.max(key.chars.length, 1);
-    const ch = key.chars[charIdx];
+    // Multi-tap cycles through Latin chars assigned to this Zhuyin key
+    const chars = ENGLISH_CHARS[key.fn];
+    if (!chars || chars.length === 0) return;
+    const ch = chars[(tapCount - 1) % chars.length];
     if (ch) this._appendChar(ch);
   }
 

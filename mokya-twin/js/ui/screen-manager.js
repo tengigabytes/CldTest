@@ -46,7 +46,10 @@ export class ScreenManager {
     if (this._animating) return;
 
     const prev = this._current;
-    if (prev) this._history.push(prev._name);
+    if (prev) {
+      this._history.push(prev._name);
+      if (typeof prev.onLeave === 'function') prev.onLeave(name);
+    }
     this._current = next;
     next.onEnter(prev?._name);
 
@@ -64,6 +67,7 @@ export class ScreenManager {
     const prev = this._current;
     const next = this._screens.get(prevName);
     if (!next) return;
+    if (prev && typeof prev.onLeave === 'function') prev.onLeave(prevName);
     this._current = next;
     next.onEnter(prev?._name);
     this._playTransition(transition, prev, next);
@@ -172,6 +176,9 @@ export class BaseScreen {
     this._entered = true;
     this._scrollY = 0;
   }
+
+  /** Called when leaving this screen. Override to clean up timers/listeners. */
+  onLeave(toScreen) {}
 
   /** Called every rAF. Must call r.drawStatusBar() + r.drawTabBar(). */
   render(now) { /* override */ }
