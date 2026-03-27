@@ -45,6 +45,13 @@ export class SettingsScreen extends BaseScreen {
     }, 800);
   }
 
+  onLeave(toScreen) {
+    if (this._coreTimer) {
+      clearInterval(this._coreTimer);
+      this._coreTimer = null;
+    }
+  }
+
   render(now) {
     const r = this.r;
     this._uptime = Math.floor((Date.now() - this._startTime) / 1000);

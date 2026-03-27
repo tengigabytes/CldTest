@@ -1,0 +1,93 @@
+# CMakeLists_wasm.txt — Emscripten build for mie_core.wasm
+#
+# Usage (from repo root):
+#   source /path/to/emsdk/emsdk_env.sh
+#   cd mokya-twin
+#   emcmake cmake -S firmware-stubs -B build-wasm -DCMAKE_BUILD_TYPE=Release
+#   cmake --build build-wasm --target mie_core
+#   cp build-wasm/mie_core.wasm wasm/mie_core.wasm
+#
+# Prerequisites:
+#   - emsdk installed and activated (emcc --version ≥ 3.1.50)
+#   - firmware/mie/mie_core.c  (actual MIE state machine — lives in MokyaLora repo)
+#   - firmware/mie/mie_trie.c
+#   - firmware/mie/mie_timer.c
+#
+# This CMakeLists targets the stubs in this directory for CI/testing.
+# Point MIE_SOURCES at the real firmware sources for production builds.
+
+cmake_minimum_required(VERSION 3.20)
+project(mie_core C)
+
+# ── Source files ──────────────────────────────────────────────────
+# Adjust paths when building from real firmware sources.
+set(MIE_SOURCES
+    # Stub sources (CI/dev — replace with real firmware paths)
+    ${CMAKE_CURRENT_SOURCE_DIR}/stubs/mie_core_stub.c
+    # Real sources (uncomment when building from MokyaLora repo):
+    # ${CMAKE_SOURCE_DIR}/../../firmware/mie/mie_core.c
+    # ${CMAKE_SOURCE_DIR}/../../firmware/mie/mie_trie.c
+    # ${CMAKE_SOURCE_DIR}/../../firmware/mie/mie_timer.c
+)
+
+add_executable(mie_core ${MIE_SOURCES})
+
+target_include_directories(mie_core PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+# ── Emscripten link flags ─────────────────────────────────────────
+set_target_properties(mie_core PROPERTIES
+    SUFFIX ".wasm"
+)
+
+target_link_options(mie_core PRIVATE
+    # Output only .wasm — no JS glue (we write our own in mie-hal.js)
+    -sSTANDALONE_WASM=1
+
+    # Export list — must match mie_wasm_api.h exactly
+    -sEXPORTED_FUNCTIONS=[
+        "_mie_init",
+        "_mie_process_key",
+        "_mie_get_composition",
+        "_mie_get_candidates",
+        "_mie_select_candidate",
+        "_mie_reset",
+        "_mie_tick",
+        "_mie_trie_load_blob",
+        "_malloc",
+        "_free"
+    ]
+
+    # Imports provided by mie-hal.js (env object)
+    -sINCOMING_MODULE_JS_API=[]
+
+    # Memory: 256 KB initial, 4 MB max (mirrors RP2350 SRAM budget)
+    -sINITIAL_MEMORY=262144
+    -sMAXIMUM_MEMORY=4194304
+    -sALLOW_MEMORY_GROWTH=1
+
+    # Enable SharedArrayBuffer for zero-copy frame buffer (Phase 4+)
+    # Requires COOP/COEP headers on the server.
+    # -sUSE_PTHREADS=1
+    # -sSHARED_MEMORY=1
+
+    # Optimisation
+    -O2
+    --no-entry
+)
+
+# ── Strip debug info in Release ───────────────────────────────────
+if(CMAKE_BUILD_TYPE STREQUAL "Release")
+    target_link_options(mie_core PRIVATE -g0)
+else()
+    target_link_options(mie_core PRIVATE -g2 -sSAFE_HEAP=1)
+endif()
+
+# ── Post-build: copy to wasm/ output directory ────────────────────
+add_custom_command(TARGET mie_core POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy
+        $<TARGET_FILE:mie_core>
+        ${CMAKE_SOURCE_DIR}/../wasm/mie_core.wasm
+    COMMENT "Copying mie_core.wasm → mokya-twin/wasm/"
+)

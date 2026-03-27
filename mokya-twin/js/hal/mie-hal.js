@@ -172,15 +172,14 @@ export class MIE_Bridge extends EventTarget {
   }
 
   /**
-   * Select a candidate by index.
+   * Select a candidate by index and commit immediately.
    * @param {number} idx
    */
   selectCandidate(idx) {
     if (this._useWasm && this._wasm) {
       this._wasm.mie_select_candidate(idx);
     } else {
-      this._jsImpl.candidateIdx = idx;
-      this._jsImpl._confirmCandidate();
+      this._jsImpl.selectCandidateAt(idx);
     }
   }
 
