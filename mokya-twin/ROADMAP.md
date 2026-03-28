@@ -1,7 +1,7 @@
 # MokyaLora Digital Twin — Development Roadmap
 
-Repository: `tengigabytes/MokyaLora`
-Sandbox repo: `tengigabytes/CldTest/mokya-twin/`
+Repository: `tengigabytes/MokyaLora_EMU`
+Firmware submodule: `tengigabytes/MokyaLora` (at `MokyaLora/`)
 
 ---
 

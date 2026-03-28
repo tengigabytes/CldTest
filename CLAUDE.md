@@ -4,16 +4,23 @@ This file provides guidance for AI assistants (Claude Code and similar tools) wo
 
 ## Repository Overview
 
-**Repository:** `tengigabytes/CldTest`
-**Description:** A test/scratch repository used for experimenting with Claude Code workflows, GitHub integrations, and AI-assisted development.
+**Repository:** `tengigabytes/MokyaLora_EMU`
+**Description:** MokyaLora Digital Twin — browser-based PWA emulator for the MokyaLora LoRa/Meshtastic handheld device (RP2350 + ILI9341 + 6×6 Zhuyin keyboard).
 
 ## Repository State
 
-This repository is currently in early initialization. At time of writing it contains only:
-- `README.md` — placeholder title only
-- `CLAUDE.md` — this file
+The repository contains:
+- `README.md` — project overview and quick start
+- `CLAUDE.md` — this file (AI assistant guidance)
+- `mokya-twin/` — browser PWA simulator (HTML/CSS/JS, no build step)
+- `MokyaLora/` — firmware submodule (RP2350 C source, read-only reference)
 
-There is no established application framework, language, or build system yet. When code is added, update this file to reflect the stack.
+**Stack:** Vanilla JS (ES modules), Canvas 2D, Web Serial API, Service Worker PWA. No bundler or transpiler — serves directly from the file system.
+
+**Run locally:**
+```bash
+npx serve mokya-twin   # or: python3 -m http.server -d mokya-twin 8080
+```
 
 ## Git Workflow
 
@@ -51,19 +58,17 @@ If a push fails due to a transient network error, retry up to 4 times with expon
 
 All GitHub interactions (issues, PRs, comments, file contents) must go through the MCP GitHub tools (`mcp__github__*`). Do not use `gh` CLI or direct API calls.
 
-Repository scope is restricted to `tengigabytes/CldTest`. Do not interact with other repositories.
+Repository scope is restricted to `tengigabytes/MokyaLora_EMU`. Do not interact with other repositories.
 
-## Development Conventions (To Be Updated)
+## Development Conventions
 
-When a language and framework are chosen, document the following here:
-
-- **Language & runtime version**
-- **Dependency management** (install command, lockfile policy)
-- **How to run the app** locally
-- **How to run tests** (command, coverage expectations)
-- **Linting & formatting** (commands, auto-fix vs. CI-only)
-- **Build process** (if applicable)
-- **Environment variables** (required vs. optional, `.env.example` location)
+- **Language:** Vanilla JS (ES2022 modules), no TypeScript, no bundler
+- **Dependency management:** No `package.json` runtime deps; `npx serve` is dev-only
+- **How to run the app:** `npx serve mokya-twin` or `python3 -m http.server -d mokya-twin 8080`
+- **How to run tests:** No automated tests yet (Phase 2 will add Jest/Vitest for MIE core)
+- **Linting:** Not configured yet
+- **Build process:** None — source files are served directly
+- **Deployment:** GitHub Actions (`deploy.yml`) pushes `mokya-twin/` to GitHub Pages on every push to `main`
 
 ## General AI Assistant Guidelines
 
