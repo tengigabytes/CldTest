@@ -45,14 +45,17 @@ mokya-twin/
 
 ---
 
-## Phase 1 — Foundation ✅ (Current)
+## Phase 1 — Foundation ✅ (Complete)
 
-**Goal:** Beautiful, interactive device simulation. All architectural layers in place.
+**Goal:** High-fidelity interactive device simulation. All architectural layers in place.
 
 **Deliverables:**
-- [x] Device frame: dark phone body, green-tinted 240×320 IPS screen, bezel, scanlines, LED pulse
-- [x] 36-key 6×6 keyboard: Zhuyin labels, press animations, ripple effect, D-pad area
+- [x] PCB form factor: FR4 green soldermask, yellow silkscreen screen border, left antenna stub
+- [x] 320×240 landscape display (ILI9341 hardware match), CSS zoom fills page width on mobile
+- [x] 36-key 6×6 keyboard: three-line labels (注音 / QWERTY / 計算機), press animations, ripple
+- [x] Nav area: 5-col grid, D-pad centered, VOL± on right, FUNC/BACK aligned left of D-pad
 - [x] HAL abstraction: `DisplayHAL`, `KeyboardHAL`, `MIE_Bridge`
+- [x] Instant key response: `key:tap` fires immediately on keyup (multi-tap cycles within 300ms)
 - [x] MIE skeleton: state machine, trie structure, RP2350 timer simulator
 - [x] WASM placeholder: `MIE_Bridge.loadWasm()` entry point ready
 - [x] Canvas renderer: LVGL-style widgets (status bar, tab bar, bubbles, charts, bars)
@@ -60,11 +63,11 @@ mokya-twin/
 - [x] RSSI waveform animation, LoRa signal bars, battery icon
 - [x] Physical keyboard binding for desktop development
 - [x] Web Serial UI: connect/disconnect buttons, mode indicator
-- [x] PWA: `manifest.json` + Service Worker (offline capable)
+- [x] PWA: `manifest.json` + Service Worker (offline, auto-reload on deploy)
 - [x] Debug console panel (HAL/MIE event log)
 - [x] Mock message conversation + simulated replies
 
-**How to run (Phase 1):**
+**How to run:**
 ```bash
 # Serve locally (required for ES modules + SW)
 npx serve mokya-twin
@@ -81,7 +84,7 @@ python3 -m http.server -d mokya-twin 8080
 
 **Deliverables:**
 - [ ] Complete Zhuyin composition FSM (initial → medial → final → tone → commit)
-- [ ] Multi-tap with `MIE_Timer` (800ms window, cycle through chars on same key)
+- [ ] Multi-tap with `MIE_Timer` (300ms window, cycle through chars on same key)
 - [ ] `MIE_Trie` full phonetic dictionary (load real `zhuyin.json` / `.bin`)
 - [ ] Candidate list navigation: `UP`/`DOWN` to browse, `OK` to select
 - [ ] English mode: multi-tap → a–z mapping on Zhuyin keys (Nokia T9-style)
@@ -209,12 +212,13 @@ The WASM module imports exactly these three functions, making JS↔WASM interop 
 
 ## GitHub Pages Deployment
 
-```bash
-# From repo root
-git subtree push --prefix mokya-twin origin gh-pages
-# Or with gh CLI:
-gh workflow run pages --ref main
+The site deploys automatically via GitHub Actions on every push to `main`.
+
 ```
+https://tengigabytes.github.io/MokyaLora_EMU/
+```
+
+Service Worker auto-update: after deploy, open tabs reload automatically — no manual cache clearing needed.
 
 **server headers** (required for Web Serial + SharedArrayBuffer):
 ```
