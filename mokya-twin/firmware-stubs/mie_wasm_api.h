@@ -74,6 +74,12 @@ MIE_EXPORT const char* mie_cand_word_ptr(int idx);
 MIE_EXPORT int         mie_sel(void);
 MIE_EXPORT int         mie_page_sz(void);
 MIE_EXPORT int         mie_page_cnt(void);
+/** Current page number (0-indexed). Updates after TAB / UP / DOWN cross-page. */
+MIE_EXPORT int         mie_cur_page(void);
+/** Word pointer for page-relative index idx (use instead of mie_cand_word_ptr for display). */
+MIE_EXPORT const char* mie_page_cand_ptr(int idx);
+/** Candidate count on the current page (may be < mie_page_sz() on last page). */
+MIE_EXPORT int         mie_page_cand_cnt(void);
 MIE_EXPORT void        mie_clear_state(void);
 
 #ifdef __cplusplus

@@ -177,13 +177,13 @@ export class MIE_Bridge extends EventTarget {
     return [...this._jsImpl.compBuffer];
   }
 
-  /** Get current candidate list. */
+  /** Get candidates on the current page (updates after TAB / UP / DOWN). */
   getCandidates() {
     if (this._useWasm && this._wasm) {
-      const n = this._wasm.mie_cand_count();
+      const n = this._wasm.mie_page_cand_cnt();
       const out = [];
       for (let i = 0; i < n; i++) {
-        out.push(this._readWasmStr(this._wasm.mie_cand_word_ptr(i)));
+        out.push(this._readWasmStr(this._wasm.mie_page_cand_ptr(i)));
       }
       return out;
     }

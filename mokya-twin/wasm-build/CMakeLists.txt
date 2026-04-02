@@ -70,6 +70,9 @@ _mie_cand_word_ptr,\
 _mie_sel,\
 _mie_page_sz,\
 _mie_page_cnt,\
+_mie_cur_page,\
+_mie_page_cand_ptr,\
+_mie_page_cand_cnt,\
 _mie_clear_state,\
 _malloc,\
 _free\
