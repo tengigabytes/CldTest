@@ -157,6 +157,28 @@ int mie_page_cnt(void) {
   return mie_cand_page_count(g_ctx);
 }
 
+/** Current page number (0-indexed). */
+EMSCRIPTEN_KEEPALIVE extern "C"
+int mie_cur_page(void) {
+  if (!g_ctx) return 0;
+  return mie_cand_page(g_ctx);
+}
+
+/** Pointer to null-terminated UTF-8 word at page-relative index idx. */
+EMSCRIPTEN_KEEPALIVE extern "C"
+const char* mie_page_cand_ptr(int idx) {
+  if (!g_ctx) return "";
+  const char* w = mie_page_cand_word(g_ctx, idx);
+  return w ? w : "";
+}
+
+/** Number of candidates on the current page (may be less than page_sz on last page). */
+EMSCRIPTEN_KEEPALIVE extern "C"
+int mie_page_cand_cnt(void) {
+  if (!g_ctx) return 0;
+  return mie_page_cand_count(g_ctx);
+}
+
 // ── Actions ───────────────────────────────────────────────────────────────────
 
 EMSCRIPTEN_KEEPALIVE extern "C"
