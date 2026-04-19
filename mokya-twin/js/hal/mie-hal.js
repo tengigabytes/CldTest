@@ -90,6 +90,10 @@ export class MIE_Bridge extends EventTarget {
     /** setInterval handle driving mie_tick() */
     this._tickTimer = null;
 
+    /** Input pending state captured at press-edge, read at release-edge so
+     *  OK-with-empty-composition can fire action:enter. */
+    this._inputBeforePress = '';
+
     // Forward JS processor events to bridge consumers
     this._forwardEvents();
 
@@ -168,41 +172,45 @@ export class MIE_Bridge extends EventTarget {
   // ── Public API (stable across Phase 1–4) ────────────────────
 
   /**
-   * Process a key tap event.
-   * @param {{ key: {row:number, col:number}, tapCount: number }} keyEvent
-   */
-  processKeyTap(keyEvent) {
-    if (this._useWasm && this._wasm) {
-      const { row, col } = keyEvent.key;
-      const keycode = emuToKeycode(row, col);
-      const now = this._now();
-      // Capture pending buffer before the key so we can detect OK-with-empty.
-      const inputBefore = this._readWasmStr(this._wasm.mie_input_ptr());
-      this._wasm.mie_key(keycode, 1, now);
-      this._wasm.mie_key(keycode, 0, now + 1);
-      this._pollWasmState();
-      // OK with no pending composition → send the accumulated committed text
-      if (keycode === KEYCODE.OK && inputBefore === '') {
-        this._emit('action:enter', { text: this._pendingCommitted });
-        this._pendingCommitted = '';
-      }
-    } else {
-      this._jsImpl.processKeyTap(keyEvent);
-    }
-  }
-
-  /**
-   * Process immediate key-down (for navigation feedback).
+   * Process key-down (press edge). Fires once per physical press.
+   * KeyboardHAL emits key:down on keydown and key:tap on keyup, so we
+   * map them to the two ImeLogic edges: press here, release in
+   * processKeyTap. Doing both edges in processKeyTap AND another press
+   * in processKeyDown would double-trigger every input.
    * @param {{ key: {row:number, col:number} }} keyEvent
    */
   processKeyDown(keyEvent) {
     if (this._useWasm && this._wasm) {
       const { row, col } = keyEvent.key;
       const keycode = emuToKeycode(row, col);
+      // Capture pending buffer before the press so the release edge can
+      // detect OK-with-empty-composition.
+      this._inputBeforePress = this._readWasmStr(this._wasm.mie_input_ptr());
       this._wasm.mie_key(keycode, 1, this._now());
       this._pollWasmState();
     } else {
       this._jsImpl.processKeyDown(keyEvent);
+    }
+  }
+
+  /**
+   * Process key-up (release edge).
+   * @param {{ key: {row:number, col:number}, tapCount: number }} keyEvent
+   */
+  processKeyTap(keyEvent) {
+    if (this._useWasm && this._wasm) {
+      const { row, col } = keyEvent.key;
+      const keycode = emuToKeycode(row, col);
+      this._wasm.mie_key(keycode, 0, this._now());
+      this._pollWasmState();
+      // OK with no pending composition → send accumulated committed text.
+      if (keycode === KEYCODE.OK && this._inputBeforePress === '') {
+        this._emit('action:enter', { text: this._pendingCommitted });
+        this._pendingCommitted = '';
+      }
+      this._inputBeforePress = '';
+    } else {
+      this._jsImpl.processKeyTap(keyEvent);
     }
   }
 
@@ -220,6 +228,27 @@ export class MIE_Bridge extends EventTarget {
       return this._readWasmStr(this._wasm.mie_mode_ptr());
     }
     return this._jsImpl.mode ?? '';
+  }
+
+  /**
+   * Single-snapshot pending view matching mie::PendingView. Style values:
+   *   0 = None, 1 = PrefixBold, 2 = Inverted.
+   * matchedPrefixBytes counts UTF-8 bytes (not codepoints) of the matched
+   * prefix inside `str`; it is 0 when style !== PrefixBold.
+   */
+  getPendingView() {
+    if (this._useWasm && this._wasm) {
+      const str = this._readWasmStr(this._wasm.mie_input_ptr());
+      return {
+        str,
+        byteLen:            this._wasm.mie_pending_byte_len(),
+        matchedPrefixBytes: this._wasm.mie_pending_matched_prefix(),
+        style:              this._wasm.mie_pending_style(),
+      };
+    }
+    // JS fallback: flat text, no style info
+    const str = this._jsImpl.inputText ?? '';
+    return { str, byteLen: new TextEncoder().encode(str).length, matchedPrefixBytes: 0, style: str ? 1 : 0 };
   }
 
   /** Get current composition buffer as string array (JS mode only). */
@@ -241,6 +270,25 @@ export class MIE_Bridge extends EventTarget {
     return [...this._jsImpl.candidates];
   }
 
+  /** Get the full merged candidate list (across all firmware pages). */
+  getAllCandidates() {
+    if (this._useWasm && this._wasm) {
+      const n = this._wasm.mie_cand_count();
+      const out = [];
+      for (let i = 0; i < n; i++) {
+        out.push(this._readWasmStr(this._wasm.mie_cand_word_ptr(i)));
+      }
+      return out;
+    }
+    return [...this._jsImpl.candidates];
+  }
+
+  /** Absolute selected index over the full merged candidate list. */
+  getSelectedAbs() {
+    if (this._useWasm && this._wasm) return this._wasm.mie_selected_abs();
+    return 0;
+  }
+
   /** Get selected candidate index on the current page. */
   getPageSel() {
     if (this._useWasm && this._wasm) return this._wasm.mie_sel();
@@ -256,6 +304,12 @@ export class MIE_Bridge extends EventTarget {
   /** Get total page count. */
   getPageCount() {
     if (this._useWasm && this._wasm) return this._wasm.mie_page_cnt();
+    return 0;
+  }
+
+  /** Get current page index (0-based). */
+  getCurrentPage() {
+    if (this._useWasm && this._wasm) return this._wasm.mie_cur_page();
     return 0;
   }
 
@@ -426,18 +480,23 @@ export class MIE_Bridge extends EventTarget {
     }
 
     // Emit composition update
-    const candidates = this.getCandidates();
-    const inputStr   = this.getInputStr();
-    const modeStr    = this.getModeStr();
+    const candidates    = this.getCandidates();
+    const allCandidates = this.getAllCandidates();
+    const pending       = this.getPendingView();
+    const modeStr       = this.getModeStr();
     this.dispatchEvent(new CustomEvent('composition:update', {
       detail: {
-        buffer:     inputStr,
-        candidates,
-        committed:  this._pendingCommitted ?? '',
-        mode:       modeStr,
-        sel:        this.getPageSel(),
-        pageCount:  this.getPageCount(),
-        wasm:       true,
+        buffer:       pending.str,          // back-compat (string)
+        pending,                             // { str, byteLen, matchedPrefixBytes, style }
+        candidates,                          // page-slice (firmware kPageSize)
+        allCandidates,                       // full merged list
+        selectedAbs:  this.getSelectedAbs(),
+        committed:    this._pendingCommitted ?? '',
+        mode:         modeStr,
+        sel:          this.getPageSel(),
+        page:         this.getCurrentPage(),
+        pageCount:    this.getPageCount(),
+        wasm:         true,
       }
     }));
   }

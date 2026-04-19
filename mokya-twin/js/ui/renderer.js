@@ -192,53 +192,230 @@ export class MokyaRenderer {
    * @param {number}   selIdx     selected candidate index
    * @param {string}   mode       input mode label
    */
-  drawCompositionBar({ committed, buffer, candidates, selIdx, mode }) {
-    const bh = 28, by = this.H - 22 - bh;
-    // Background
+  /**
+   * Two-row MIE display inspired by firmware mie_repl.cpp.
+   * Row order (top → bottom): 候選, 文字.
+   *
+   * The 候選 row no longer numbers entries (the user navigates with
+   * ←/→) and it packs as many candidates as will fit in the row's
+   * width; the sliding window keeps the selected candidate visible
+   * when the full list overflows.
+   *
+   * @param {{
+   *   committedLeft:  string,
+   *   committedRight: string,
+   *   pending:        { str: string, matchedPrefixBytes: number, style: number },
+   *   allCandidates:  string[],     // full merged list
+   *   candidates:     string[],     // firmware page slice (fallback)
+   *   selectedAbs:    number,       // absolute index into allCandidates
+   *   selIdx:         number,       // within-page index (fallback)
+   *   cursorBlink:    boolean,
+   * }} state
+   */
+  drawCompositionBar(state) {
+    const CAND_H = 22;
+    const TEXT_H = 22;
+    const BAR_Y  = this.H - 22 /* tab bar */ - CAND_H - TEXT_H;
+
+    // ── Backdrop ───────────────────────────────────────────────────
     this.ctx.fillStyle = '#161618';
-    this.ctx.fillRect(0, by, this.W, bh);
+    this.ctx.fillRect(0, BAR_Y, this.W, CAND_H + TEXT_H);
     this.ctx.fillStyle = this.C.BORDER;
-    this.ctx.fillRect(0, by, this.W, 1);
+    this.ctx.fillRect(0, BAR_Y, this.W, 1);
+    this.ctx.fillRect(0, BAR_Y + CAND_H, this.W, 1);
 
-    // Mode indicator
-    this.ctx.font = this.F.XS;
-    this.ctx.fillStyle = this.C.TEXT_MUTED;
-    this.ctx.textBaseline = 'middle';
-    const modeLabel = { ZHUYIN:'注', ENGLISH:'EN', NUMERIC:'123', SYMBOL:'符' }[mode] ?? mode;
-    this.ctx.fillText(modeLabel, 3, by + bh / 2);
+    // ── Row 1 (top): 候選 ───────────────────────────────────────────
+    this._drawCandRow(state, BAR_Y, CAND_H);
 
-    // Composition buffer (phonemes being typed)
-    // buffer may be a string (WASM mode) or an array (JS mode)
-    const bufStr = Array.isArray(buffer) ? buffer.join('') : (buffer ?? '');
-    if (bufStr.length > 0) {
-      this.ctx.font = this.F.ZH_MD;
-      this.ctx.fillStyle = this.C.GREEN;
-      this.ctx.fillText(bufStr, 18, by + bh / 2);
-    }
+    // ── Row 2 (bottom): 文字 ────────────────────────────────────────
+    this._drawTextRow(state, BAR_Y + CAND_H, TEXT_H);
 
-    // Candidates row
-    if (candidates && candidates.length > 0) {
-      let cx = 18 + (bufStr.length > 0 ? 24 : 0);
-      this.ctx.fillStyle = this.C.BORDER;
-      this.ctx.fillRect(cx - 2, by + 2, 1, bh - 4);
-      cx += 4;
-
-      candidates.slice(0, 8).forEach((c, i) => {
-        const isSelected = i === selIdx;
-        if (isSelected) {
-          this.ctx.fillStyle = this.C.GREEN_MUTED;
-          this.ctx.fillRect(cx - 1, by + 2, 14, bh - 4);
-        }
-        this.ctx.font = this.F.ZH_MD;
-        this.ctx.fillStyle = isSelected ? this.C.GREEN : this.C.TEXT;
-        this.ctx.textBaseline = 'middle';
-        this.ctx.fillText(c, cx + 1, by + bh / 2);
-        cx += 16;
-      });
-    }
-
-    this.ctx.textAlign = 'left';
+    this.ctx.textAlign   = 'left';
     this.ctx.textBaseline = 'alphabetic';
+  }
+
+  _drawTextRow({ committedLeft, committedRight, pending, cursorBlink }, y, h) {
+    const midY   = y + h / 2;
+    const labelX = 2;
+    const TAG_W  = 26;  // "文字" label column width
+
+    // Label gutter "文字"
+    this.ctx.font        = this.F.XS;
+    this.ctx.fillStyle   = this.C.TEXT_DIM;
+    this.ctx.textBaseline = 'middle';
+    this.ctx.fillText('文字', labelX, midY);
+
+    // Vertical separator
+    this.ctx.fillStyle = this.C.BORDER;
+    this.ctx.fillRect(TAG_W, y + 3, 1, h - 6);
+
+    // Text content
+    const startX = TAG_W + 5;
+    let x = startX;
+    this.ctx.font = this.F.ZH_MD;
+
+    // ── committed-left (normal) ──
+    this.ctx.fillStyle = this.C.TEXT;
+    if (committedLeft) {
+      this.ctx.fillText(committedLeft, x, midY);
+      x += this.ctx.measureText(committedLeft).width;
+    }
+
+    // ── pending (styled) ──
+    const pv = pending ?? { str: '', matchedPrefixBytes: 0, style: 0 };
+    const pendingStr = pv.str ?? '';
+    if (pendingStr.length > 0) {
+      const w = this.ctx.measureText(pendingStr).width;
+      if (pv.style === 2 /* Inverted */) {
+        // Reverse-video: green fill, background-color text
+        this.ctx.fillStyle = this.C.GREEN;
+        this.ctx.fillRect(x - 1, y + 3, w + 2, h - 6);
+        this.ctx.fillStyle = '#0A0A0A';
+        this.ctx.fillText(pendingStr, x, midY);
+      } else if (pv.style === 1 /* PrefixBold */) {
+        // Underline the whole pending; bold the matched prefix.
+        const mp = pv.matchedPrefixBytes | 0;
+        const prefixStr = mp > 0 ? this._utf8Slice(pendingStr, 0, mp) : '';
+        const restStr   = mp > 0 ? this._utf8Slice(pendingStr, mp)    : pendingStr;
+
+        // Prefix: bold green
+        if (prefixStr) {
+          this.ctx.font = 'bold ' + this.F.ZH_MD;
+          this.ctx.fillStyle = this.C.GREEN;
+          this.ctx.fillText(prefixStr, x, midY);
+          const pw = this.ctx.measureText(prefixStr).width;
+          this._underline(x, y + h - 4, pw);
+          x += pw;
+          this.ctx.font = this.F.ZH_MD;
+        }
+        // Rest: normal green
+        if (restStr) {
+          this.ctx.fillStyle = this.C.GREEN_DIM;
+          this.ctx.fillText(restStr, x, midY);
+          const rw = this.ctx.measureText(restStr).width;
+          this._underline(x, y + h - 4, rw);
+          x += rw;
+        }
+      } else {
+        // None
+        this.ctx.fillStyle = this.C.GREEN;
+        this.ctx.fillText(pendingStr, x, midY);
+        x += w;
+      }
+    }
+
+    // ── cursor block (reverse-video) ──
+    const curW = 2;
+    if (cursorBlink !== false) {
+      this.ctx.fillStyle = this.C.GREEN;
+      this.ctx.fillRect(x, y + 4, curW, h - 8);
+    }
+    x += curW + 1;
+
+    // ── committed-right (normal) ──
+    if (committedRight) {
+      this.ctx.fillStyle = this.C.TEXT;
+      this.ctx.font = this.F.ZH_MD;
+      this.ctx.fillText(committedRight, x, midY);
+    }
+  }
+
+  _drawCandRow(state, y, h) {
+    const midY  = y + h / 2;
+    const TAG_W = 26;
+
+    this.ctx.font        = this.F.XS;
+    this.ctx.fillStyle   = this.C.TEXT_DIM;
+    this.ctx.textBaseline = 'middle';
+    this.ctx.fillText('候選', 2, midY);
+
+    this.ctx.fillStyle = this.C.BORDER;
+    this.ctx.fillRect(TAG_W, y + 3, 1, h - 6);
+
+    this.ctx.font = this.F.ZH_MD;
+
+    // Prefer the full list so the row can overflow firmware's 5-per-page.
+    // Fall back to the page slice if the full list isn't provided.
+    const all = (state.allCandidates && state.allCandidates.length)
+                ? state.allCandidates
+                : (state.candidates ?? []);
+    if (all.length === 0) {
+      this.ctx.fillStyle = this.C.TEXT_MUTED;
+      this.ctx.fillText('(按鍵開始輸入)', TAG_W + 5, midY);
+      this._candWindowStart = 0;
+      return;
+    }
+
+    // Absolute selection; fall back to page-relative when the full list
+    // isn't available (JS fallback path).
+    const sel = (state.selectedAbs !== undefined && state.selectedAbs !== null)
+                ? state.selectedAbs
+                : (state.selIdx ?? 0);
+
+    // Width budget. Reserve a small gutter on each side; no page indicator.
+    const startX = TAG_W + 5;
+    const endX   = this.W - 3;
+    const PAD    = 6;   // space between candidates (in px)
+    const SLOT_X_PAD = 6; // horizontal padding inside each candidate slot
+
+    // Compute candidate widths once.
+    const widths = all.map(c => this.ctx.measureText(c).width + SLOT_X_PAD);
+
+    // Maintain a sliding window start so the selected candidate is visible.
+    if (this._candWindowStart === undefined) this._candWindowStart = 0;
+    let ws = this._candWindowStart;
+    if (sel < ws) ws = sel;                       // scroll left to reveal sel
+
+    // Scroll right until sel fits within [ws .. ws+fit).
+    // Compute how many from ws fit in the row width; if sel outside, advance ws.
+    const fitFrom = (from) => {
+      let x = startX, n = 0;
+      for (let i = from; i < all.length; i++) {
+        const w = widths[i] + (n > 0 ? PAD : 0);
+        if (x + w > endX) break;
+        x += w; n++;
+      }
+      return n;
+    };
+    while (sel >= ws + fitFrom(ws) && ws < all.length - 1) ws++;
+    this._candWindowStart = ws;
+
+    // Render the visible slice.
+    let x = startX;
+    for (let i = ws; i < all.length; i++) {
+      const w = widths[i] + (i > ws ? PAD : 0);
+      if (x + w > endX) break;
+      const slotX = x + (i > ws ? PAD : 0);
+      const slotW = widths[i];
+      const isSel = (i === sel);
+      if (isSel) {
+        this.ctx.fillStyle = this.C.GREEN_MUTED;
+        this.ctx.fillRect(slotX - 1, y + 3, slotW + 1, h - 6);
+      }
+      this.ctx.fillStyle = isSel ? this.C.GREEN : this.C.TEXT;
+      this.ctx.fillText(all[i], slotX + SLOT_X_PAD / 2, midY);
+      x += w;
+    }
+  }
+
+  _underline(x, y, w) {
+    this.ctx.fillStyle = this.C.GREEN_DIM;
+    this.ctx.fillRect(x, y, w, 1);
+  }
+
+  _measureWith(font, text) {
+    const prev = this.ctx.font;
+    this.ctx.font = font;
+    const w = this.ctx.measureText(text).width;
+    this.ctx.font = prev;
+    return w;
+  }
+
+  /** Slice a UTF-8 string by *byte* offsets, returning a JS substring. */
+  _utf8Slice(str, startByte, endByte) {
+    const bytes = new TextEncoder().encode(str);
+    const slice = bytes.subarray(startByte, endByte ?? bytes.length);
+    return new TextDecoder().decode(slice);
   }
 
   // ── Card / Container ─────────────────────────────────────────
