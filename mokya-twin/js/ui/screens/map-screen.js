@@ -15,29 +15,50 @@
  */
 
 import { BaseScreen } from '../screen-manager.js';
+import { NODES }      from './nodes-data.js';
 
-// Simulated nearby nodes (GNSS lat/lon near Yangmingshan, Taiwan)
-const MOCK_NODES = [
-  { id:'BM-7388', lat: 25.1932, lon: 121.5599, rssi:-82,  snr:4.2, desc:'七星山頂' },
-  { id:'VK2-101', lat: 25.1705, lon: 121.4811, rssi:-98,  snr:1.8, desc:'淡水' },
-  { id:'BM-0042', lat: 25.0339, lon: 121.5645, rssi:-105, snr:0.5, desc:'台北101' },
-  { id:'TW-5511', lat: 25.2100, lon: 121.6700, rssi:-91,  snr:2.4, desc:'基隆山' },
-  { id:'ME',      lat: 25.1830, lon: 121.5419, rssi:0,    snr:99,  desc:'MY POS' },
-];
+// "Self" pseudo-node placed at a fixed mock position. Real implementation
+// will pull the EMU's own GNSS fix once IPC is wired.
+const ME_LAT = 25.1830;
+const ME_LON = 121.5419;
 
 export class MapScreen extends BaseScreen {
-  constructor(renderer, mie, serial) {
+  constructor(renderer, mie, serial, deps) {
     super(renderer, mie, serial);
-    this._selectedNodeIdx = 4; // Default: highlight MY POS
     this._panX = 0;
     this._panY = 0;
     this._zoom = 1;
     this._animPhase = 0;
-    this._nodes = MOCK_NODES.map(n => ({ ...n }));
+    this._nodes = [];           // populated in onEnter from NODES
+    this._selectedNodeIdx = 0;
+    this._deps = deps ?? null;  // { nodeDetail }
+  }
+
+  /** Snapshot the live NODES registry into a flat shape for rendering. */
+  _refreshNodes() {
+    const out = NODES
+      .filter(n => n.position && n.position.lat_i && n.position.lon_i)
+      .map(n => ({
+        ref:  n,                          // original NodeInfo for OK→detail
+        id:   n.user.short_name || n.user.long_name,
+        lat:  n.position.lat_i / 1e7,
+        lon:  n.position.lon_i / 1e7,
+        rssi: n.rssi ?? -120,
+        snr:  n.snr ?? 0,
+        desc: n.user.long_name,
+      }));
+    out.push({
+      ref: null, id: 'ME', lat: ME_LAT, lon: ME_LON,
+      rssi: 0, snr: 99, desc: 'MY POS',
+    });
+    this._nodes = out;
+    if (this._selectedNodeIdx >= out.length) this._selectedNodeIdx = 0;
   }
 
   onEnter(from) {
     super.onEnter(from);
+    this._refreshNodes();
+    if (this._nodes.length > 1) this._selectedNodeIdx = 0; // first real node
     // Wiggle node positions slightly every 5s (simulated GPS drift)
     this._driftInterval = setInterval(() => this._driftNodes(), 5000);
   }
@@ -228,6 +249,19 @@ export class MapScreen extends BaseScreen {
     if (key.fn === 'TONE1') { this._zoom = Math.min(4, this._zoom * 1.5); return; }
     if (key.fn === 'TONE2') { this._zoom = Math.max(0.3, this._zoom / 1.5); return; }
     if (key.fn === 'OK') {
+      // First press: cycle through nodes. If the same node is OK'd again
+      // (or the node has a backing NodeInfo), open NodeDetail.
+      const sel = this._nodes[this._selectedNodeIdx];
+      if (sel?.ref && this._deps?.nodeDetail) {
+        this._deps.nodeDetail.setNode(sel.ref);
+        this.goto('node-detail', 'slide_l');
+        return;
+      }
+      this._selectedNodeIdx = (this._selectedNodeIdx + 1) % this._nodes.length;
+      return;
+    }
+    // TAB cycles selection without entering detail.
+    if (key.fn === 'TAB') {
       this._selectedNodeIdx = (this._selectedNodeIdx + 1) % this._nodes.length;
       return;
     }

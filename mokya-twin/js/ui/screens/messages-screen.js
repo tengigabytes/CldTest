@@ -29,10 +29,11 @@ const TAB_CHANNEL = 0;
 const TAB_PRIVATE = 1;
 
 export class MessagesScreen extends BaseScreen {
-  constructor(renderer, mie, serial) {
+  constructor(renderer, mie, serial, deps) {
     super(renderer, mie, serial);
     this._tab = TAB_CHANNEL;
     this._sel = [0, 0];   // selected row per tab
+    this._deps = deps ?? null;     // { chatScreen }
   }
 
   render(now) {
@@ -130,7 +131,21 @@ export class MessagesScreen extends BaseScreen {
       this._sel[this._tab] = (this._sel[this._tab] + 1) % list.length;
       return;
     }
-    if (fn === 'OK')   { this.goto('chat', 'slide_l'); return; }
+    if (fn === 'OK') {
+      const chat = this._deps?.chatScreen;
+      const i = this._sel[this._tab];
+      if (chat) {
+        if (this._tab === TAB_CHANNEL) {
+          const it = CHANNEL_FEED[i];
+          if (it) chat.setChannel(i, it.id);
+        } else {
+          const it = PRIVATE_FEED[i];
+          if (it) chat.setRecipient('!' + it.from.toLowerCase().replace(/\s/g, ''), it.from);
+        }
+      }
+      this.goto('chat', 'slide_l');
+      return;
+    }
     if (fn === 'BACK') { this.goBack(); return; }
   }
 }

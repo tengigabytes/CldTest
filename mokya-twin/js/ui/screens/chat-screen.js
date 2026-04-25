@@ -29,6 +29,8 @@ export class ChatScreen extends BaseScreen {
     this._messages = [...INITIAL_MESSAGES];
     this._scrollY  = 0;
     this._maxScroll = 0;
+    // Conversation context: {kind:'channel', id, name} or {kind:'dm', id, name}
+    this._conversation = { kind: 'channel', id: 0, name: 'LongFast' };
     this._compState = {
       pending:       { str: '', matchedPrefixBytes: 0, style: 0 },
       candidates:    [],
@@ -42,6 +44,18 @@ export class ChatScreen extends BaseScreen {
     // Fake RSSI waveform data (circular buffer, 40 points)
     this._rssiHistory = Array.from({ length: 40 }, () => -(70 + Math.random() * 40));
     this._rssiTick    = 0;
+  }
+
+  /** Switch to a channel context (id = channel index). */
+  setChannel(id, name = `Ch ${id}`) {
+    this._conversation = { kind: 'channel', id, name };
+    this._scrollY = 0;
+  }
+
+  /** Switch to a private-message context with a specific node. */
+  setRecipient(nodeId, name = nodeId) {
+    this._conversation = { kind: 'dm', id: nodeId, name };
+    this._scrollY = 0;
   }
 
   onEnter(from) {
@@ -129,12 +143,26 @@ export class ChatScreen extends BaseScreen {
 
   render(now) {
     const r = this.r;
-    const CONTENT_TOP = 18;
+    const STATUS_BTM = 18;
+    const HDR_H      = 16;          // conversation context bar
+    const CONTENT_TOP = STATUS_BTM + HDR_H;
     const TAB_H       = 22;
     // Composition block = 文字 row (22) + 候選 row (22) = 44 when shown.
     const COMP_H      = this._showComp ? 44 : 0;
     const CONTENT_BTM = r.H - TAB_H - COMP_H;
     const CONTENT_H   = CONTENT_BTM - CONTENT_TOP;
+
+    // Conversation context bar
+    r.d.fillRect(0, STATUS_BTM, r.W, HDR_H, r.C.SURFACE);
+    const conv = this._conversation;
+    const tag  = conv.kind === 'dm' ? '私訊 →' : '頻道 #';
+    const tagColor = conv.kind === 'dm' ? r.C.WARNING : r.C.GREEN;
+    r.drawLabel(8, STATUS_BTM + 12, tag, {
+      font: r.F.ZH_SM, color: tagColor,
+    });
+    r.drawLabel(48, STATUS_BTM + 12, conv.name, {
+      font: r.F.ZH_SM, color: r.C.TEXT,
+    });
 
     // Background
     r.d.fillRect(0, CONTENT_TOP, r.W, CONTENT_H, r.C.BG);

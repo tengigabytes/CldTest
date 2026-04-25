@@ -34,13 +34,14 @@ const ACT_VISIBLE_ROWS = 6;
 const ACT_LIST_TOP_Y   = 70;
 
 export class NodeDetailScreen extends BaseScreen {
-  constructor(renderer, mie, serial) {
+  constructor(renderer, mie, serial, deps) {
     super(renderer, mie, serial);
     this._node = null;
     this._tab  = TAB_INFO;
     this._infoSel = 0; this._infoTop = 0;
     this._actSel  = 0; this._actTop  = 0;
     this._toast = null;       // { text, until }
+    this._deps = deps ?? null;          // { chatScreen }
   }
 
   setNode(node) {
@@ -317,7 +318,10 @@ export class NodeDetailScreen extends BaseScreen {
     let msg;
     switch (id) {
       case 'send-dm':
-        // Forward to chat-screen (no per-recipient context yet — stub).
+        // Set chat-screen's conversation context to this node before navigating.
+        if (this._deps?.chatScreen) {
+          this._deps.chatScreen.setRecipient(n.user.id, n.user.long_name);
+        }
         this.goto('chat', 'slide_l');
         return;
       case 'sendtext-ack': {

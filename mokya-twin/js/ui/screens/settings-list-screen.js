@@ -30,11 +30,17 @@ export class SettingsListScreen extends BaseScreen {
     this._fields = opts.fields ?? [];
     this._sel    = 0;
     this._top    = 0;
-    this._fieldEdit = null;     // injected by app.js — shared FieldEditScreen
+    this._fieldEdit  = null;    // shared FieldEditScreen instance
+    this._saveFn     = null;    // tree-specific persistence callback
+    this._editTarget = 'field-edit';
   }
 
-  /** Inject the shared edit screen so OK can hand off the selected field. */
-  setEditScreen(fieldEditScreen) { this._fieldEdit = fieldEditScreen; }
+  /** Inject the shared edit screen + tree-specific save fn. */
+  setEditScreen(fieldEditScreen, saveFn = null, editTarget = 'field-edit') {
+    this._fieldEdit  = fieldEditScreen;
+    this._saveFn     = saveFn;
+    this._editTarget = editTarget;
+  }
 
   /** Refresh the data on entry — useful when a parent screen swapped fields. */
   setData(title, fields) {
@@ -120,8 +126,8 @@ export class SettingsListScreen extends BaseScreen {
     if (fn === 'DOWN') { this._sel = (this._sel + 1) % N;     this._ensureVisible(); return; }
     if (fn === 'OK') {
       if (this._fieldEdit) {
-        this._fieldEdit.setField(this._fields[this._sel]);
-        this.goto('field-edit', 'slide_l');
+        this._fieldEdit.setField(this._fields[this._sel], this._saveFn);
+        this.goto(this._editTarget, 'slide_l');
       }
       return;
     }

@@ -15,7 +15,6 @@
  */
 
 import { BaseScreen } from '../screen-manager.js';
-import { save as saveMeshConfig } from './mesh-config-store.js';
 
 export class FieldEditScreen extends BaseScreen {
   constructor(renderer, mie, serial) {
@@ -34,10 +33,15 @@ export class FieldEditScreen extends BaseScreen {
     };
   }
 
-  /** Caller (SettingsListScreen) sets the field before navigating in. */
-  setField(field) {
+  /**
+   * Caller (SettingsListScreen) sets the field + a save callback before
+   * navigating in. The save callback is invoked on commit so the right
+   * persistence store (mesh-config / system-settings) gets written to.
+   */
+  setField(field, saveFn = null) {
     this._field   = field;
     this._draft   = field.value;
+    this._saveFn  = saveFn;
     if (field.type === 'enum') {
       const idx = field.options.indexOf(field.value);
       this._enumIdx = idx >= 0 ? idx : 0;
@@ -284,7 +288,7 @@ export class FieldEditScreen extends BaseScreen {
   _commit() {
     if (this._field) {
       this._field.value = this._draft;
-      saveMeshConfig();
+      if (typeof this._saveFn === 'function') this._saveFn();
     }
     this.goBack();
   }

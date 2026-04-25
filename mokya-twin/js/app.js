@@ -23,7 +23,6 @@ import { MokyaRenderer }        from './ui/renderer.js';
 import { ScreenManager }        from './ui/screen-manager.js';
 import { ChatScreen }           from './ui/screens/chat-screen.js';
 import { MapScreen }            from './ui/screens/map-screen.js';
-import { SettingsScreen }       from './ui/screens/settings-screen.js';
 import { HomeScreen }           from './ui/screens/home-screen.js';
 import { MenuScreen }           from './ui/screens/menu-screen.js';
 import { MeshtasticScreen }     from './ui/screens/meshtastic-screen.js';
@@ -36,7 +35,12 @@ import { MeshModulesScreen }    from './ui/screens/mesh-modules-screen.js';
 import { MeshChannelsScreen }   from './ui/screens/mesh-channels-screen.js';
 import { SettingsListScreen }   from './ui/screens/settings-list-screen.js';
 import { FieldEditScreen }      from './ui/screens/field-edit-screen.js';
+import { SensorsScreen }        from './ui/screens/sensors-screen.js';
+import { BatteryScreen }        from './ui/screens/battery-screen.js';
+import { SystemConfigScreen }   from './ui/screens/system-config-screen.js';
 import { PlaceholderScreen }    from './ui/screens/placeholder-screen.js';
+import { save as saveMeshConfig }   from './ui/screens/mesh-config-store.js';
+import { save as saveSystemConfig } from './ui/screens/system-settings-store.js';
 import { MiefFont, installMiefFont } from './ui/mief-font.js';
 
 // ── Globals (accessible in console for dev) ──────────────────────
@@ -55,7 +59,7 @@ async function boot() {
   // to the browser's native rasteriser inside the patched ctx.
   const miefFont = new MiefFont();
   try {
-    await miefFont.load(`./data/mie_unifont_16.bin?v=v29`);
+    await miefFont.load(`./data/mie_unifont_16.bin?v=v30`);
     installMiefFont(display.getContext(), miefFont);
     console.log(`[App] Unifont loaded — ${miefFont.glyphCount} glyphs`);
   } catch (err) {
@@ -83,7 +87,7 @@ async function boot() {
   // after the Service Worker cache is evicted. Bump MIE_ASSET_VER in
   // lockstep with sw.js CACHE_VERSION whenever any dict or wasm asset is
   // rebuilt so the query string changes.
-  const MIE_ASSET_VER = 'v29';
+  const MIE_ASSET_VER = 'v30';
   const v = `?v=${MIE_ASSET_VER}`;
   await mie.loadWasm(`./wasm/mie_core.wasm${v}`);
 
@@ -124,30 +128,39 @@ async function boot() {
   screens.register('menu',        new MenuScreen(renderer, mie, serial));
   // MESHTASTIC sub-tree
   screens.register('meshtastic',  new MeshtasticScreen(renderer, mie, serial));
-  screens.register('messages',    new MessagesScreen(renderer, mie, serial));
-  const nodeDetail = new NodeDetailScreen(renderer, mie, serial);
+  // Chat is shared between MESHTASTIC sub-menu items — instantiate first
+  // so we can pass it as a dep to messages and node-detail for context wiring.
+  const chatScreen = new ChatScreen(renderer, mie, serial);
+  screens.register('chat',        chatScreen);
+  screens.register('messages',    new MessagesScreen(renderer, mie, serial, { chatScreen }));
+  const nodeDetail = new NodeDetailScreen(renderer, mie, serial, { chatScreen });
   screens.register('nodes',       new NodesScreen(renderer, mie, serial, { nodeDetail }));
   screens.register('node-detail', nodeDetail);
-  screens.register('chat',        new ChatScreen(renderer, mie, serial));
   screens.register('connect',     new ConnectScreen(renderer, mie, serial));
   // Top-level menu targets
-  // mesh-config is a tree: MeshConfigScreen → SettingsListScreen / MeshModulesScreen / MeshChannelsScreen.
-  // The shared SettingsListScreen instance is mutated via setData() before each navigation.
-  // FieldEditScreen receives the selected field on demand and writes the
-  // edited value back when the user confirms.
-  const settingsList = new SettingsListScreen(renderer, mie, serial);
-  const fieldEdit    = new FieldEditScreen(renderer, mie, serial);
-  settingsList.setEditScreen(fieldEdit);
-  const deps = { settingsList };
-  screens.register('mesh-config',         new MeshConfigScreen(renderer, mie, serial, deps));
-  screens.register('mesh-modules',        new MeshModulesScreen(renderer, mie, serial, deps));
-  screens.register('mesh-channels',       new MeshChannelsScreen(renderer, mie, serial, deps));
-  screens.register('mesh-settings-list',  settingsList);
-  screens.register('field-edit',          fieldEdit);
-  screens.register('sensors',     new PlaceholderScreen(renderer, mie, serial, '感測器'));
-  screens.register('gnss',        new MapScreen(renderer, mie, serial));
-  screens.register('battery',     new PlaceholderScreen(renderer, mie, serial, '電池'));
-  screens.register('settings',    new SettingsScreen(renderer, mie, serial));
+  // ── Mesh-config tree ─────────────────────────────────────────
+  const meshSettingsList = new SettingsListScreen(renderer, mie, serial);
+  const meshFieldEdit    = new FieldEditScreen(renderer, mie, serial);
+  meshSettingsList.setEditScreen(meshFieldEdit, saveMeshConfig, 'mesh-field-edit');
+  const meshDeps = { settingsList: meshSettingsList };
+  screens.register('mesh-config',         new MeshConfigScreen(renderer, mie, serial, meshDeps));
+  screens.register('mesh-modules',        new MeshModulesScreen(renderer, mie, serial, meshDeps));
+  screens.register('mesh-channels',       new MeshChannelsScreen(renderer, mie, serial, meshDeps));
+  screens.register('mesh-settings-list',  meshSettingsList);
+  screens.register('mesh-field-edit',     meshFieldEdit);
+
+  // ── System (EMU) settings tree ───────────────────────────────
+  const sysSettingsList = new SettingsListScreen(renderer, mie, serial);
+  const sysFieldEdit    = new FieldEditScreen(renderer, mie, serial);
+  sysSettingsList.setEditScreen(sysFieldEdit, saveSystemConfig, 'system-field-edit');
+  const sysDeps = { settingsList: sysSettingsList };
+  screens.register('settings',            new SystemConfigScreen(renderer, mie, serial, sysDeps));
+  screens.register('system-settings-list', sysSettingsList);
+  screens.register('system-field-edit',   sysFieldEdit);
+
+  screens.register('sensors',     new SensorsScreen(renderer, mie, serial));
+  screens.register('gnss',        new MapScreen(renderer, mie, serial, { nodeDetail }));
+  screens.register('battery',     new BatteryScreen(renderer, mie, serial));
 
   // ── 7. Wire keyboard → MIE → screens ────────────────────────────
   keyboard.addEventListener('key:down', (e) => {
