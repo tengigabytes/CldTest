@@ -226,14 +226,23 @@ function formatUptime(secs) {
 // Each node carries three rolling buffers:
 //   signal_history     — { t_ms, rssi, snr }   (drives the RSSI/SNR chart)
 //   traceroute_history — { t_ms, hops:[id], snr_per_hop:[dB] }
-//   ping_history       — { t_ms, latency_ms, rssi, snr, ok }
+//   ack_history        — { t_ms, latency_ms, hop, ok }
+//
+// Note: Meshtastic has NO dedicated ping protocol. The closest mechanism
+// is `meshtastic --sendtext --ack --dest !id`, which sends a text packet
+// with the want_ack flag and times the Routing ACK from the FIRST HOP
+// only — the ACK confirms next-hop reception, not end-to-end delivery.
+// `ack_history.hop` records which hop produced the ACK so the UI can
+// reflect that nuance.
+//
+// True end-to-end reachability uses Traceroute (TRACEROUTE_APP).
 //
 // Buffers are populated procedurally on import so the EMU shows a useful
 // history without waiting for the user to run actions.
 
 export const SIGNAL_HISTORY_MAX     = 60;
 export const TRACEROUTE_HISTORY_MAX = 8;
-export const PING_HISTORY_MAX       = 16;
+export const ACK_HISTORY_MAX        = 16;
 
 /** Push a {rssi, snr} sample (with current timestamp). Trims to MAX. */
 export function pushSignalSample(node, rssi, snr) {
@@ -254,13 +263,18 @@ export function pushTracerouteResult(node, hops, snr_per_hop) {
     node.traceroute_history.length = TRACEROUTE_HISTORY_MAX;
 }
 
-/** Push a ping reply (or timeout). */
-export function pushPingResult(node, latency_ms, rssi, snr, ok = true) {
-  if (!node.ping_history) node.ping_history = [];
-  node.ping_history.unshift({ t_ms: Date.now(), latency_ms, rssi, snr, ok });
-  if (node.ping_history.length > PING_HISTORY_MAX)
-    node.ping_history.length = PING_HISTORY_MAX;
-  if (ok) pushSignalSample(node, rssi, snr);
+/**
+ * Push a Routing ACK result for a `--sendtext --ack` attempt.
+ *   hop = 1 means the ACK came from the next hop (always the case for
+ *         multi-hop targets). For hops_away ≤ 1 the next hop IS the
+ *         destination, so the ACK is also end-to-end.
+ *   ok = true on routing ACK, false on timeout / NAK.
+ */
+export function pushAckResult(node, latency_ms, hop, ok = true) {
+  if (!node.ack_history) node.ack_history = [];
+  node.ack_history.unshift({ t_ms: Date.now(), latency_ms, hop, ok });
+  if (node.ack_history.length > ACK_HISTORY_MAX)
+    node.ack_history.length = ACK_HISTORY_MAX;
 }
 
 /** Format a t_ms timestamp as a relative "Xx 前" string. */
@@ -279,7 +293,7 @@ function seedHistory() {
   for (const n of NODES) {
     n.signal_history     = [];
     n.traceroute_history = [];
-    n.ping_history       = [];
+    n.ack_history        = [];
     if (n.rssi === null || n.snr === null) continue;
 
     // Signal samples: random walk around the node's current rssi/snr.
@@ -312,14 +326,16 @@ function seedHistory() {
       });
     }
 
-    // Ping history: a few past pings.
+    // ACK history: a few past sendtext --ack attempts. The ACK comes
+    // from the first hop, so latency is roughly RTT to that hop —
+    // typically tens to a few hundred ms for direct neighbours, more
+    // jittery for relays.
     for (let i = 0; i < 5; i++) {
-      n.ping_history.push({
+      n.ack_history.push({
         t_ms: now - i * 12 * 60_000,
         latency_ms: 80 + Math.floor(Math.random() * 200),
-        rssi: n.rssi + ((Math.random() - 0.5) * 6) | 0,
-        snr:  round1(n.snr + (Math.random() - 0.5) * 1.5),
-        ok:   Math.random() > 0.1,
+        hop: 1,
+        ok:  Math.random() > 0.1,
       });
     }
   }
@@ -331,14 +347,27 @@ function otherNodeIds(node) {
 }
 seedHistory();
 
-/** Action catalogue mirrored on `meshtastic --ping/--traceroute/...`. */
+/**
+ * Action catalogue. Every entry maps 1:1 onto a real flag in
+ * `meshtastic-python` CLI (verified against meshtastic/python @ main).
+ *
+ * Note: there is intentionally no "Ping" entry — Meshtastic has no
+ * dedicated ping protocol. The closest real mechanism is
+ * `--sendtext --ack`, exposed below as 「ACK 測試」.
+ */
 export const NODE_ACTIONS = [
-  { id: 'send-dm',     label: '發送私訊',     hint: '對此節點開啟私訊' },
-  { id: 'ping',        label: 'Ping',        hint: '送出 PING 並等待 ACK' },
-  { id: 'traceroute',  label: 'Traceroute',  hint: '回報 mesh 路由' },
-  { id: 'req-pos',     label: '請求位置',     hint: '請求最新位置回報' },
-  { id: 'req-tel',     label: '請求遙測',     hint: '請求 device_metrics' },
-  { id: 'toggle-fav',  label: '切換最愛',     hint: '加入/移出收藏' },
-  { id: 'toggle-ign',  label: '切換忽略',     hint: '加入/移出忽略清單' },
-  { id: 'remove',      label: '移除節點',     hint: '從 NodeDB 刪除' },
+  // Messaging
+  { id: 'send-dm',    label: '發送私訊',    cli: '--sendtext --dest !id'                },
+  { id: 'sendtext-ack', label: 'ACK 測試',  cli: '--sendtext "ping" --ack --dest !id'   },
+  { id: 'traceroute', label: 'Traceroute', cli: '--traceroute --dest !id'              },
+  // Pull data on demand
+  { id: 'req-pos',    label: '請求位置',    cli: '--request-position --dest !id'        },
+  { id: 'req-tel',    label: '請求遙測',    cli: '--request-telemetry --dest !id'       },
+  // NodeDB management
+  { id: 'toggle-fav', label: '切換最愛',    cli: '--{set,remove}-favorite-node !id'     },
+  { id: 'toggle-ign', label: '切換忽略',    cli: '--{set,remove}-ignored-node !id'      },
+  { id: 'remove',     label: '移除節點',    cli: '--remove-node !id'                    },
+  // Remote admin (requires admin channel)
+  { id: 'reboot',     label: '遠端重啟',    cli: '--reboot --dest !id'                  },
+  { id: 'shutdown',   label: '遠端關機',    cli: '--shutdown --dest !id'                },
 ];

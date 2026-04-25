@@ -18,7 +18,7 @@
 import { BaseScreen } from '../screen-manager.js';
 import {
   NODES, NODE_ACTIONS, buildNodeInfoFields,
-  pushPingResult, pushTracerouteResult, formatRelativeTime,
+  pushAckResult, pushTracerouteResult, pushSignalSample, formatRelativeTime,
 } from './nodes-data.js';
 
 const TAB_INFO    = 0;
@@ -219,17 +219,17 @@ export class NodeDetailScreen extends BaseScreen {
       font: r.F.ZH_SM, color: r.C.TEXT_DIM,
     });
 
-    // Traceroute / Ping section header
+    // Traceroute / ACK 測試 section header
     r.ctx.fillStyle = r.C.BORDER;
     r.ctx.fillRect(4, 144, r.W - 8, 1);
-    r.drawLabel(8, 158, 'Traceroute · Ping', {
+    r.drawLabel(8, 158, 'Traceroute · sendtext --ack', {
       font: r.F.ZH_SM, color: r.C.GREEN_DIM,
     });
 
-    // Combined recent activity: traceroutes + pings, sorted by time desc.
+    // Combined recent activity: traceroutes + sendtext ACKs, time desc.
     const events = [
       ...(n.traceroute_history ?? []).map(e => ({ kind: 'tr', t_ms: e.t_ms, e })),
-      ...(n.ping_history       ?? []).map(e => ({ kind: 'pg', t_ms: e.t_ms, e })),
+      ...(n.ack_history        ?? []).map(e => ({ kind: 'ak', t_ms: e.t_ms, e })),
     ].sort((a, b) => b.t_ms - a.t_ms);
 
     const ROW_H = 16;
@@ -249,11 +249,15 @@ export class NodeDetailScreen extends BaseScreen {
           font: r.F.XS, color: r.C.TEXT, maxWidth: r.W - 60,
         });
       } else {
+        // ACK row: latency from sendtext --ack; the ACK comes from the
+        // first hop only, so for hops_away≥2 it's not an end-to-end
+        // confirmation. Annotate accordingly.
         const e = ev.e;
         const ico = e.ok ? '✓' : '✗';
         const lat = e.ok ? `${e.latency_ms} ms` : '逾時';
-        r.drawLabel(8, y + 12, `PG ${rel}`, { font: r.F.XS, color: e.ok ? r.C.GREEN : r.C.DANGER });
-        r.drawLabel(50, y + 12, `${ico} ${lat} · ${e.rssi ?? '?'} dBm · ${fmtSnr(e.snr)} dB`, {
+        const hopNote = e.hop > 1 ? ` (hop ${e.hop})` : '';
+        r.drawLabel(8, y + 12, `AK ${rel}`, { font: r.F.XS, color: e.ok ? r.C.GREEN : r.C.DANGER });
+        r.drawLabel(50, y + 12, `${ico} ${lat}${hopNote}`, {
           font: r.F.XS, color: e.ok ? r.C.TEXT : r.C.DANGER,
         });
       }
@@ -270,7 +274,7 @@ export class NodeDetailScreen extends BaseScreen {
       r.ctx.fillRect(trackX, thumbY, 2, thumbH);
     }
     if (events.length === 0) {
-      r.drawLabel(r.W / 2, 188, '(尚未執行 Ping / Traceroute)', {
+      r.drawLabel(r.W / 2, 188, '(尚未執行 ACK 測試 / Traceroute)', {
         font: r.F.ZH_SM, color: r.C.TEXT_DIM, align: 'center',
       });
     }
@@ -316,15 +320,28 @@ export class NodeDetailScreen extends BaseScreen {
         // Forward to chat-screen (no per-recipient context yet — stub).
         this.goto('chat', 'slide_l');
         return;
-      case 'ping': {
-        const latency = 80 + Math.floor(Math.random() * 220);
+      case 'sendtext-ack': {
+        // Mirrors `meshtastic --sendtext "ping" --ack --dest !id`. The
+        // routing ACK comes from the FIRST hop only, so for hops_away≥2
+        // a successful ACK does not imply end-to-end delivery.
+        const directNeighbour = n.hops_away <= 1;
+        const baseLatency = directNeighbour ? 80 : 60;
+        const jitter      = directNeighbour ? 200 : 140;
+        const latency = baseLatency + Math.floor(Math.random() * jitter);
         const ok      = n.rssi !== null && Math.random() > 0.05;
-        const rssi    = ok ? (n.rssi + ((Math.random() - 0.5) * 4) | 0) : null;
-        const snr     = ok ? Math.round((n.snr + (Math.random() - 0.5) * 1.5) * 10) / 10 : null;
-        pushPingResult(n, latency, rssi, snr, ok);
+        const hop     = directNeighbour ? 1 : 1; // ACK is always next-hop
+        pushAckResult(n, latency, hop, ok);
+        if (ok) {
+          // Sample the link towards the first hop (we may not be the
+          // target, but the radio interaction is real).
+          const rssi = (n.rssi + ((Math.random() - 0.5) * 4)) | 0;
+          const snr  = Math.round((n.snr + (Math.random() - 0.5) * 1.5) * 10) / 10;
+          pushSignalSample(n, rssi, snr);
+        }
+        const tag = directNeighbour ? '' : ' (next-hop)';
         msg = ok
-          ? `→ Ping ${idShort}  ✓ ${latency} ms · ${rssi} dBm`
-          : `→ Ping ${idShort}  ✗ 逾時`;
+          ? `→ sendtext --ack  ✓ ${latency} ms${tag}`
+          : `→ sendtext --ack  ✗ 逾時`;
         break;
       }
       case 'traceroute': {
@@ -340,20 +357,31 @@ export class NodeDetailScreen extends BaseScreen {
         break;
       }
       case 'req-pos':
-        msg = `→ requestPosition ${idShort}  ✓ 已送出`;
+        msg = `→ --request-position ${idShort}  ✓ 已送出`;
         break;
       case 'req-tel':
-        msg = `→ requestTelemetry ${idShort}  ✓ 已送出`;
+        msg = `→ --request-telemetry ${idShort}  ✓ 已送出`;
+        break;
+      case 'reboot':
+        msg = `→ --reboot ${idShort}  ⚠ 需 admin 通道`;
+        break;
+      case 'shutdown':
+        msg = `→ --shutdown ${idShort}  ⚠ 需 admin 通道`;
         break;
       case 'toggle-fav':
         n.is_favorite = !n.is_favorite;
-        msg = n.is_favorite ? `★ ${idShort} 已加入最愛` : `${idShort} 已取消最愛`;
+        msg = n.is_favorite
+          ? `→ --set-favorite-node ${idShort}`
+          : `→ --remove-favorite-node ${idShort}`;
         break;
       case 'toggle-ign':
         n.is_ignored = !n.is_ignored;
-        msg = n.is_ignored ? `${idShort} 已加入忽略` : `${idShort} 已取消忽略`;
+        msg = n.is_ignored
+          ? `→ --set-ignored-node ${idShort}`
+          : `→ --remove-ignored-node ${idShort}`;
         break;
       case 'remove': {
+        // `--remove-node !id`
         const i = NODES.indexOf(n);
         if (i >= 0) NODES.splice(i, 1);
         this.goBack();
