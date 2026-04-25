@@ -222,6 +222,115 @@ function formatUptime(secs) {
   return `${m}分`;
 }
 
+// ── History bookkeeping ───────────────────────────────────────────────
+// Each node carries three rolling buffers:
+//   signal_history     — { t_ms, rssi, snr }   (drives the RSSI/SNR chart)
+//   traceroute_history — { t_ms, hops:[id], snr_per_hop:[dB] }
+//   ping_history       — { t_ms, latency_ms, rssi, snr, ok }
+//
+// Buffers are populated procedurally on import so the EMU shows a useful
+// history without waiting for the user to run actions.
+
+export const SIGNAL_HISTORY_MAX     = 60;
+export const TRACEROUTE_HISTORY_MAX = 8;
+export const PING_HISTORY_MAX       = 16;
+
+/** Push a {rssi, snr} sample (with current timestamp). Trims to MAX. */
+export function pushSignalSample(node, rssi, snr) {
+  if (!node.signal_history) node.signal_history = [];
+  node.signal_history.push({ t_ms: Date.now(), rssi, snr });
+  if (node.signal_history.length > SIGNAL_HISTORY_MAX)
+    node.signal_history.splice(0, node.signal_history.length - SIGNAL_HISTORY_MAX);
+  // Mirror onto the live current values so other UIs see the latest.
+  if (rssi !== null) node.rssi = rssi;
+  if (snr  !== null) node.snr  = snr;
+}
+
+/** Push a traceroute result: hops is an array of node-ids ending at the target. */
+export function pushTracerouteResult(node, hops, snr_per_hop) {
+  if (!node.traceroute_history) node.traceroute_history = [];
+  node.traceroute_history.unshift({ t_ms: Date.now(), hops: hops.slice(), snr_per_hop: snr_per_hop.slice() });
+  if (node.traceroute_history.length > TRACEROUTE_HISTORY_MAX)
+    node.traceroute_history.length = TRACEROUTE_HISTORY_MAX;
+}
+
+/** Push a ping reply (or timeout). */
+export function pushPingResult(node, latency_ms, rssi, snr, ok = true) {
+  if (!node.ping_history) node.ping_history = [];
+  node.ping_history.unshift({ t_ms: Date.now(), latency_ms, rssi, snr, ok });
+  if (node.ping_history.length > PING_HISTORY_MAX)
+    node.ping_history.length = PING_HISTORY_MAX;
+  if (ok) pushSignalSample(node, rssi, snr);
+}
+
+/** Format a t_ms timestamp as a relative "Xx 前" string. */
+export function formatRelativeTime(t_ms, now = Date.now()) {
+  const dt = Math.max(0, (now - t_ms) / 1000) | 0;
+  if (dt < 60)    return `${dt} 秒前`;
+  if (dt < 3600)  return `${(dt / 60) | 0} 分前`;
+  if (dt < 86400) return `${(dt / 3600) | 0} 小時前`;
+  return `${(dt / 86400) | 0} 天前`;
+}
+
+// Procedural seeding ---------------------------------------------------
+function seedHistory() {
+  const now = Date.now();
+  const SAMPLE_INTERVAL_MS = 60_000;       // 1 sample per minute (60 minutes back)
+  for (const n of NODES) {
+    n.signal_history     = [];
+    n.traceroute_history = [];
+    n.ping_history       = [];
+    if (n.rssi === null || n.snr === null) continue;
+
+    // Signal samples: random walk around the node's current rssi/snr.
+    let r = n.rssi, s = n.snr;
+    for (let i = SIGNAL_HISTORY_MAX; i > 0; i--) {
+      r = clamp(r + (Math.random() - 0.5) * 4, -125, -50);
+      s = clamp(s + (Math.random() - 0.5) * 1.0, -10, 10);
+      n.signal_history.push({
+        t_ms: now - i * SAMPLE_INTERVAL_MS,
+        rssi: Math.round(r),
+        snr:  Math.round(s * 10) / 10,
+      });
+    }
+    // Final sample = the live values (so the chart ends at "now").
+    n.signal_history.push({ t_ms: now, rssi: n.rssi, snr: n.snr });
+
+    // Traceroute history: a couple of past attempts.
+    const myId = '!MOKYA-LOC';
+    const intermediates = otherNodeIds(n).slice(0, Math.max(0, n.hops_away - 1));
+    n.traceroute_history.push({
+      t_ms: now - 5 * 60_000,
+      hops: [myId, ...intermediates, n.user.id],
+      snr_per_hop: Array(intermediates.length + 1).fill(0).map(() => round1(n.snr + (Math.random() - 0.5) * 2)),
+    });
+    if (n.hops_away > 1) {
+      n.traceroute_history.push({
+        t_ms: now - 47 * 60_000,
+        hops: [myId, ...intermediates.slice(0, intermediates.length - 1).reverse(), n.user.id],
+        snr_per_hop: Array(intermediates.length + 1).fill(0).map(() => round1(n.snr + (Math.random() - 0.5) * 2)),
+      });
+    }
+
+    // Ping history: a few past pings.
+    for (let i = 0; i < 5; i++) {
+      n.ping_history.push({
+        t_ms: now - i * 12 * 60_000,
+        latency_ms: 80 + Math.floor(Math.random() * 200),
+        rssi: n.rssi + ((Math.random() - 0.5) * 6) | 0,
+        snr:  round1(n.snr + (Math.random() - 0.5) * 1.5),
+        ok:   Math.random() > 0.1,
+      });
+    }
+  }
+}
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+function round1(x) { return Math.round(x * 10) / 10; }
+function otherNodeIds(node) {
+  return NODES.filter(n => n !== node).map(n => n.user.id);
+}
+seedHistory();
+
 /** Action catalogue mirrored on `meshtastic --ping/--traceroute/...`. */
 export const NODE_ACTIONS = [
   { id: 'send-dm',     label: '發送私訊',     hint: '對此節點開啟私訊' },

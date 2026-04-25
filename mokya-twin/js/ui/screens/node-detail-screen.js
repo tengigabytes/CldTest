@@ -16,10 +16,14 @@
  */
 
 import { BaseScreen } from '../screen-manager.js';
-import { NODES, NODE_ACTIONS, buildNodeInfoFields } from './nodes-data.js';
+import {
+  NODES, NODE_ACTIONS, buildNodeInfoFields,
+  pushPingResult, pushTracerouteResult, formatRelativeTime,
+} from './nodes-data.js';
 
 const TAB_INFO    = 0;
 const TAB_ACTIONS = 1;
+const TAB_HISTORY = 2;
 
 const INFO_ROW_H        = 18;
 const INFO_VISIBLE_ROWS = 9;
@@ -44,6 +48,7 @@ export class NodeDetailScreen extends BaseScreen {
     this._tab  = TAB_INFO;
     this._infoSel = 0; this._infoTop = 0;
     this._actSel  = 0; this._actTop  = 0;
+    this._histScroll = 0;        // 0 = top of history view
     this._toast = null;
   }
 
@@ -76,9 +81,9 @@ export class NodeDetailScreen extends BaseScreen {
     });
 
     // Tab strip
-    const tabs = ['資訊', '動作'];
+    const tabs = ['資訊', '動作', '歷史'];
     const tabY = 42, tabH = 22;
-    const tabW = r.W / 2;
+    const tabW = r.W / tabs.length;
     for (let i = 0; i < tabs.length; i++) {
       const x = i * tabW;
       const isSel = (i === this._tab);
@@ -93,8 +98,9 @@ export class NodeDetailScreen extends BaseScreen {
       }
     }
 
-    if (this._tab === TAB_INFO)  this._renderInfo(r, n);
-    else                          this._renderActions(r, n);
+    if      (this._tab === TAB_INFO)    this._renderInfo(r, n);
+    else if (this._tab === TAB_ACTIONS) this._renderActions(r, n);
+    else                                this._renderHistory(r, n);
 
     // Toast
     if (this._toast && now < this._toast.until) {
@@ -103,9 +109,11 @@ export class NodeDetailScreen extends BaseScreen {
         font: r.F.ZH_SM, color: r.C.GREEN, align: 'center', maxWidth: r.W - 60,
       });
     } else {
-      r.drawLabel(r.W / 2, 235,
-        this._tab === TAB_INFO ? '◀▶ 切換 · ▲▼ 捲動 · BACK 返回'
-                                : '◀▶ 切換 · ▲▼ 選擇 · OK 執行 · BACK 返回', {
+      let hint;
+      if      (this._tab === TAB_INFO)    hint = '◀▶ 切換 · ▲▼ 捲動 · BACK 返回';
+      else if (this._tab === TAB_ACTIONS) hint = '◀▶ 切換 · ▲▼ 選擇 · OK 執行 · BACK 返回';
+      else                                hint = '◀▶ 切換 · ▲▼ 捲動 · BACK 返回';
+      r.drawLabel(r.W / 2, 235, hint, {
         font: r.F.ZH_SM, color: r.C.TEXT_DIM, align: 'center',
       });
     }
@@ -173,6 +181,101 @@ export class NodeDetailScreen extends BaseScreen {
     }
   }
 
+  // ── History tab ─────────────────────────────────────────────
+  _renderHistory(r, n) {
+    // Layout (y=64..220 content area):
+    //   64..104  RSSI sparkline (h=40)
+    //   106..120 RSSI stats line
+    //   122..136 SNR stats line
+    //   140..150 Section divider + label
+    //   150..220 Traceroute history (scrollable, ~3 rows × 22 px)
+    const samples = n.signal_history ?? [];
+    if (samples.length < 2) {
+      r.drawLabel(r.W / 2, 130, '(尚無歷史資料)', {
+        font: r.F.ZH_MD, color: r.C.TEXT_DIM, align: 'center',
+      });
+      return;
+    }
+
+    // RSSI chart
+    const rssiArr = samples.map(s => s.rssi);
+    r.drawCard(4, 64, r.W - 8, 40, { radius: 4, bg: r.C.SURFACE, border: r.C.BORDER });
+    r.drawLineChart(8, 68, r.W - 16, 32, rssiArr, {
+      lineColor: r.C.GREEN, fillColor: 'rgba(48,209,88,0.10)',
+      minVal: -120, maxVal: -50, gridLines: 3,
+    });
+    r.drawLabel(7, 76, 'RSSI', { font: r.F.XS, color: r.C.TEXT_DIM });
+    r.drawLabel(r.W - 8, 76, `${samples.length} 筆`, {
+      font: r.F.XS, color: r.C.TEXT_DIM, align: 'right',
+    });
+
+    // Stats
+    const rssiStats = stats(rssiArr);
+    const snrStats  = stats(samples.map(s => s.snr));
+    r.drawLabel(8, 116, `RSSI 現${rssiStats.last} / 平均${rssiStats.avg} / 最低${rssiStats.min} dBm`, {
+      font: r.F.ZH_SM, color: rssiColor(rssiStats.last, r.C),
+    });
+    r.drawLabel(8, 132, `SNR  現${fmtSnr(snrStats.last)} / 平均${fmtSnr(snrStats.avg)} / 最低${fmtSnr(snrStats.min)} dB`, {
+      font: r.F.ZH_SM, color: r.C.TEXT_DIM,
+    });
+
+    // Traceroute / Ping section header
+    r.ctx.fillStyle = r.C.BORDER;
+    r.ctx.fillRect(4, 144, r.W - 8, 1);
+    r.drawLabel(8, 158, 'Traceroute · Ping', {
+      font: r.F.ZH_SM, color: r.C.GREEN_DIM,
+    });
+
+    // Combined recent activity: traceroutes + pings, sorted by time desc.
+    const events = [
+      ...(n.traceroute_history ?? []).map(e => ({ kind: 'tr', t_ms: e.t_ms, e })),
+      ...(n.ping_history       ?? []).map(e => ({ kind: 'pg', t_ms: e.t_ms, e })),
+    ].sort((a, b) => b.t_ms - a.t_ms);
+
+    const ROW_H = 16;
+    const VISIBLE = 4;
+    const startY = 162;
+    const top = Math.max(0, Math.min(this._histScroll, events.length - VISIBLE));
+    const rows = Math.min(VISIBLE, events.length - top);
+    for (let i = 0; i < rows; i++) {
+      const ev = events[top + i];
+      const y = startY + i * ROW_H;
+      const rel = formatRelativeTime(ev.t_ms);
+      if (ev.kind === 'tr') {
+        const e = ev.e;
+        const path = e.hops.map(h => h.replace(/^!/, '')).join('→');
+        r.drawLabel(8, y + 12, `TR ${rel}`, { font: r.F.XS, color: r.C.GREEN });
+        r.drawLabel(50, y + 12, path, {
+          font: r.F.XS, color: r.C.TEXT, maxWidth: r.W - 60,
+        });
+      } else {
+        const e = ev.e;
+        const ico = e.ok ? '✓' : '✗';
+        const lat = e.ok ? `${e.latency_ms} ms` : '逾時';
+        r.drawLabel(8, y + 12, `PG ${rel}`, { font: r.F.XS, color: e.ok ? r.C.GREEN : r.C.DANGER });
+        r.drawLabel(50, y + 12, `${ico} ${lat} · ${e.rssi ?? '?'} dBm · ${fmtSnr(e.snr)} dB`, {
+          font: r.F.XS, color: e.ok ? r.C.TEXT : r.C.DANGER,
+        });
+      }
+    }
+    if (events.length > VISIBLE) {
+      const trackH = VISIBLE * ROW_H;
+      const trackX = r.W - 2;
+      r.ctx.fillStyle = r.C.SURFACE2;
+      r.ctx.fillRect(trackX, startY, 2, trackH);
+      const thumbH = Math.max(8, ((VISIBLE / events.length) * trackH) | 0);
+      const thumbY = startY +
+        (((top / Math.max(1, events.length - VISIBLE)) * (trackH - thumbH)) | 0);
+      r.ctx.fillStyle = r.C.GREEN;
+      r.ctx.fillRect(trackX, thumbY, 2, thumbH);
+    }
+    if (events.length === 0) {
+      r.drawLabel(r.W / 2, 188, '(尚未執行 Ping / Traceroute)', {
+        font: r.F.ZH_SM, color: r.C.TEXT_DIM, align: 'center',
+      });
+    }
+  }
+
   // ── Key handling ────────────────────────────────────────────
   handleKeyTap({ key }) {
     const fn = key.fn;
@@ -180,10 +283,8 @@ export class NodeDetailScreen extends BaseScreen {
 
     if (fn === 'BACK') { this.goBack(); return; }
 
-    if (fn === 'LEFT' || fn === 'RIGHT') {
-      this._tab = (this._tab + 1) % 2;
-      return;
-    }
+    if (fn === 'LEFT')  { this._tab = (this._tab - 1 + 3) % 3; return; }
+    if (fn === 'RIGHT') { this._tab = (this._tab + 1) % 3;     return; }
 
     if (this._tab === TAB_INFO) {
       const fields = buildNodeInfoFields(this._node);
@@ -193,11 +294,17 @@ export class NodeDetailScreen extends BaseScreen {
       return;
     }
 
-    // Actions tab
-    const N = NODE_ACTIONS.length;
-    if (fn === 'UP')   { this._actSel = (this._actSel - 1 + N) % N; this._ensureActVisible(); return; }
-    if (fn === 'DOWN') { this._actSel = (this._actSel + 1) % N;     this._ensureActVisible(); return; }
-    if (fn === 'OK')   { this._runAction(NODE_ACTIONS[this._actSel].id); return; }
+    if (this._tab === TAB_ACTIONS) {
+      const N = NODE_ACTIONS.length;
+      if (fn === 'UP')   { this._actSel = (this._actSel - 1 + N) % N; this._ensureActVisible(); return; }
+      if (fn === 'DOWN') { this._actSel = (this._actSel + 1) % N;     this._ensureActVisible(); return; }
+      if (fn === 'OK')   { this._runAction(NODE_ACTIONS[this._actSel].id); return; }
+      return;
+    }
+
+    // History tab
+    if (fn === 'UP')   { this._histScroll = Math.max(0, this._histScroll - 1); return; }
+    if (fn === 'DOWN') { this._histScroll += 1; return; }
   }
 
   _runAction(id) {
@@ -209,12 +316,29 @@ export class NodeDetailScreen extends BaseScreen {
         // Forward to chat-screen (no per-recipient context yet — stub).
         this.goto('chat', 'slide_l');
         return;
-      case 'ping':
-        msg = `→ Ping ${idShort}  ✓ ack 124 ms · ${n.rssi ?? '?'} dBm`;
+      case 'ping': {
+        const latency = 80 + Math.floor(Math.random() * 220);
+        const ok      = n.rssi !== null && Math.random() > 0.05;
+        const rssi    = ok ? (n.rssi + ((Math.random() - 0.5) * 4) | 0) : null;
+        const snr     = ok ? Math.round((n.snr + (Math.random() - 0.5) * 1.5) * 10) / 10 : null;
+        pushPingResult(n, latency, rssi, snr, ok);
+        msg = ok
+          ? `→ Ping ${idShort}  ✓ ${latency} ms · ${rssi} dBm`
+          : `→ Ping ${idShort}  ✗ 逾時`;
         break;
-      case 'traceroute':
-        msg = `→ Traceroute ${idShort}  hops: 我 → ?? → ${idShort}`;
+      }
+      case 'traceroute': {
+        const myId  = '!MOKYA-LOC';
+        const others = NODES.filter(o => o !== n).map(o => o.user.id);
+        // Build a plausible hop chain of length = hops_away.
+        const intermediates = shuffle(others).slice(0, Math.max(0, n.hops_away - 1));
+        const hops = [myId, ...intermediates, n.user.id];
+        const snr_per_hop = hops.slice(1).map(() => Math.round((n.snr + (Math.random() - 0.5) * 2) * 10) / 10);
+        pushTracerouteResult(n, hops, snr_per_hop);
+        const path = hops.map(h => h.replace(/^!/, '')).join('→');
+        msg = `→ Traceroute  ${path}`;
         break;
+      }
       case 'req-pos':
         msg = `→ requestPosition ${idShort}  ✓ 已送出`;
         break;
@@ -258,4 +382,37 @@ export class NodeDetailScreen extends BaseScreen {
     if (this._actTop > N - ACT_VISIBLE_ROWS)
       this._actTop = Math.max(0, N - ACT_VISIBLE_ROWS);
   }
+}
+
+// ── Local helpers ────────────────────────────────────────────
+function stats(arr) {
+  if (!arr || arr.length === 0) return { last: 0, avg: 0, min: 0, max: 0 };
+  const valid = arr.filter(v => v !== null && !Number.isNaN(v));
+  if (valid.length === 0) return { last: 0, avg: 0, min: 0, max: 0 };
+  const last = valid[valid.length - 1];
+  let sum = 0, min = Infinity, max = -Infinity;
+  for (const v of valid) { sum += v; if (v < min) min = v; if (v > max) max = v; }
+  const avg = Math.round((sum / valid.length) * 10) / 10;
+  return { last, avg, min, max };
+}
+
+function fmtSnr(v) {
+  if (v === null || v === undefined || Number.isNaN(v)) return '—';
+  return (v > 0 ? '+' : '') + v.toFixed(1);
+}
+
+function rssiColor(v, C) {
+  if (v === null || v === undefined) return C.TEXT_DIM;
+  if (v > -90)  return C.GREEN;
+  if (v > -105) return C.WARNING;
+  return C.DANGER;
+}
+
+function shuffle(arr) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = (Math.random() * (i + 1)) | 0;
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
 }
