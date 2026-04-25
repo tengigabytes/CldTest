@@ -4,7 +4,7 @@
  * Web Serial API (USB) requires browser APIs, no network calls.
  */
 
-const CACHE_VERSION = 'v24';
+const CACHE_VERSION = 'v25';
 const CACHE_NAME    = `mokya-twin-${CACHE_VERSION}`;
 
 const STATIC_ASSETS = [
@@ -39,6 +39,7 @@ const STATIC_ASSETS = [
   './js/ui/screens/mesh-channels-screen.js',
   './js/ui/screens/mesh-settings-data.js',
   './js/ui/screens/settings-list-screen.js',
+  './js/ui/screens/field-edit-screen.js',
   './js/ui/screens/placeholder-screen.js',
   './js/serial/meshtastic-serial.js',
 ];

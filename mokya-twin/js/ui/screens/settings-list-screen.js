@@ -30,8 +30,11 @@ export class SettingsListScreen extends BaseScreen {
     this._fields = opts.fields ?? [];
     this._sel    = 0;
     this._top    = 0;
-    this._editFlash = 0;        // ms timestamp until which to show toast
+    this._fieldEdit = null;     // injected by app.js — shared FieldEditScreen
   }
+
+  /** Inject the shared edit screen so OK can hand off the selected field. */
+  setEditScreen(fieldEditScreen) { this._fieldEdit = fieldEditScreen; }
 
   /** Refresh the data on entry — useful when a parent screen swapped fields. */
   setData(title, fields) {
@@ -101,17 +104,9 @@ export class SettingsListScreen extends BaseScreen {
       r.ctx.fillRect(trackX, thumbY, 2, thumbH);
     }
 
-    // Edit toast
-    if (now < this._editFlash) {
-      r.drawCard(40, 200, r.W - 80, 24, { radius: 6, bg: r.C.SURFACE2, border: r.C.GREEN });
-      r.drawLabel(r.W / 2, 216, '編輯中…(尚未實作)', {
-        font: r.F.ZH_SM, color: r.C.GREEN, align: 'center',
-      });
-    } else {
-      r.drawLabel(r.W / 2, 235, 'OK 編輯 · BACK 返回', {
-        font: r.F.ZH_SM, color: r.C.TEXT_DIM, align: 'center',
-      });
-    }
+    r.drawLabel(r.W / 2, 235, 'OK 編輯 · BACK 返回', {
+      font: r.F.ZH_SM, color: r.C.TEXT_DIM, align: 'center',
+    });
   }
 
   handleKeyTap({ key }) {
@@ -123,7 +118,13 @@ export class SettingsListScreen extends BaseScreen {
     }
     if (fn === 'UP')   { this._sel = (this._sel - 1 + N) % N; this._ensureVisible(); return; }
     if (fn === 'DOWN') { this._sel = (this._sel + 1) % N;     this._ensureVisible(); return; }
-    if (fn === 'OK')   { this._editFlash = performance.now() + 1500; return; }
+    if (fn === 'OK') {
+      if (this._fieldEdit) {
+        this._fieldEdit.setField(this._fields[this._sel]);
+        this.goto('field-edit', 'slide_l');
+      }
+      return;
+    }
     if (fn === 'BACK') { this.goBack(); return; }
   }
 

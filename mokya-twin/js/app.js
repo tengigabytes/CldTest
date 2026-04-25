@@ -33,6 +33,7 @@ import { MeshConfigScreen }     from './ui/screens/mesh-config-screen.js';
 import { MeshModulesScreen }    from './ui/screens/mesh-modules-screen.js';
 import { MeshChannelsScreen }   from './ui/screens/mesh-channels-screen.js';
 import { SettingsListScreen }   from './ui/screens/settings-list-screen.js';
+import { FieldEditScreen }      from './ui/screens/field-edit-screen.js';
 import { PlaceholderScreen }    from './ui/screens/placeholder-screen.js';
 import { MiefFont, installMiefFont } from './ui/mief-font.js';
 
@@ -52,7 +53,7 @@ async function boot() {
   // to the browser's native rasteriser inside the patched ctx.
   const miefFont = new MiefFont();
   try {
-    await miefFont.load(`./data/mie_unifont_16.bin?v=v24`);
+    await miefFont.load(`./data/mie_unifont_16.bin?v=v25`);
     installMiefFont(display.getContext(), miefFont);
     console.log(`[App] Unifont loaded — ${miefFont.glyphCount} glyphs`);
   } catch (err) {
@@ -80,7 +81,7 @@ async function boot() {
   // after the Service Worker cache is evicted. Bump MIE_ASSET_VER in
   // lockstep with sw.js CACHE_VERSION whenever any dict or wasm asset is
   // rebuilt so the query string changes.
-  const MIE_ASSET_VER = 'v24';
+  const MIE_ASSET_VER = 'v25';
   const v = `?v=${MIE_ASSET_VER}`;
   await mie.loadWasm(`./wasm/mie_core.wasm${v}`);
 
@@ -128,12 +129,17 @@ async function boot() {
   // Top-level menu targets
   // mesh-config is a tree: MeshConfigScreen → SettingsListScreen / MeshModulesScreen / MeshChannelsScreen.
   // The shared SettingsListScreen instance is mutated via setData() before each navigation.
+  // FieldEditScreen receives the selected field on demand and writes the
+  // edited value back when the user confirms.
   const settingsList = new SettingsListScreen(renderer, mie, serial);
+  const fieldEdit    = new FieldEditScreen(renderer, mie, serial);
+  settingsList.setEditScreen(fieldEdit);
   const deps = { settingsList };
   screens.register('mesh-config',         new MeshConfigScreen(renderer, mie, serial, deps));
   screens.register('mesh-modules',        new MeshModulesScreen(renderer, mie, serial, deps));
   screens.register('mesh-channels',       new MeshChannelsScreen(renderer, mie, serial, deps));
   screens.register('mesh-settings-list',  settingsList);
+  screens.register('field-edit',          fieldEdit);
   screens.register('sensors',     new PlaceholderScreen(renderer, mie, serial, '感測器'));
   screens.register('gnss',        new MapScreen(renderer, mie, serial));
   screens.register('battery',     new PlaceholderScreen(renderer, mie, serial, '電池'));
