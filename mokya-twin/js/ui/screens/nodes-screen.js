@@ -11,26 +11,20 @@
  */
 
 import { BaseScreen } from '../screen-manager.js';
-
-const NODES = [
-  { name: 'BM-7388',   id: '!a1b2c3d4', rssi: -82, snr: 4.2, lastSeen: '2 分鐘前', battery: 78 },
-  { name: 'VK2-101',   id: '!aabbccdd', rssi: -98, snr: 1.8, lastSeen: '8 分鐘前', battery: 64 },
-  { name: 'JA1-Mokya', id: '!11223344', rssi: -76, snr: 5.5, lastSeen: '12 分鐘前', battery: 92 },
-  { name: 'KH-Roam',   id: '!deadbeef', rssi: -110, snr: -2.3, lastSeen: '1 小時前', battery: 30 },
-  { name: 'TW-Hsinchu', id: '!c0ffee01', rssi: -88, snr: 3.0, lastSeen: '2 小時前', battery: 55 },
-  { name: 'TW-Tainan', id: '!c0ffee02', rssi: -103, snr: 0.4, lastSeen: '昨天', battery: 41 },
-  { name: 'TW-Hualien', id: '!c0ffee03', rssi: null, snr: null, lastSeen: '3 天前', battery: 12 },
-];
+import { NODES }      from './nodes-data.js';
 
 const ROW_H = 36;
 const VISIBLE_ROWS = 5;
 
 export class NodesScreen extends BaseScreen {
-  constructor(renderer, mie, serial) {
+  constructor(renderer, mie, serial, deps) {
     super(renderer, mie, serial);
-    this._sel = 0;
-    this._top = 0;
+    this._sel  = 0;
+    this._top  = 0;
+    this._deps = deps ?? null;     // { nodeDetail }
   }
+
+  setDeps(deps) { this._deps = deps; }
 
   render(now) {
     const r = this.r;
@@ -62,17 +56,18 @@ export class NodesScreen extends BaseScreen {
         border: isSel ? r.C.GREEN       : r.C.BORDER,
       });
 
-      r.drawLabel(12, y + 14, n.name, {
+      const star = n.is_favorite ? '★ ' : '';
+      r.drawLabel(12, y + 14, star + n.user.long_name, {
         font: r.F.ZH_MD, color: isSel ? r.C.GREEN : r.C.TEXT,
       });
-      r.drawLabel(r.W - 12, y + 14, n.lastSeen, {
+      r.drawLabel(r.W - 12, y + 14, n.last_heard, {
         font: r.F.ZH_SM, color: r.C.TEXT_DIM, align: 'right',
       });
 
       // RSSI / SNR / battery row
       const rssiTxt = n.rssi === null ? '— dBm' : `${n.rssi} dBm`;
       const snrTxt  = n.snr  === null ? '— dB'  : `SNR ${n.snr > 0 ? '+' : ''}${n.snr.toFixed(1)}`;
-      const batTxt  = `🔋 ${n.battery}%`;
+      const batTxt  = `🔋 ${n.device_metrics.battery_level}%`;
       const rssiColor = n.rssi === null ? r.C.TEXT_MUTED
                        : n.rssi > -90  ? r.C.GREEN
                        : n.rssi > -105 ? r.C.WARNING
@@ -114,7 +109,13 @@ export class NodesScreen extends BaseScreen {
       this._ensureVisible();
       return;
     }
-    if (fn === 'OK')   { /* TODO: open node detail */ return; }
+    if (fn === 'OK') {
+      if (this._deps?.nodeDetail) {
+        this._deps.nodeDetail.setNode(NODES[this._sel]);
+        this.goto('node-detail', 'slide_l');
+      }
+      return;
+    }
     if (fn === 'BACK') { this.goBack(); return; }
   }
 
