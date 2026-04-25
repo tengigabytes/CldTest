@@ -316,6 +316,31 @@ export class MIE_Bridge extends EventTarget {
     }
   }
 
+  /**
+   * Move firmware's selected candidate to the given absolute index without
+   * committing. Walks LEFT/RIGHT (whichever path is shorter on the wrap-around
+   * ring) so the firmware's `selected_` matches `absIdx` after the call.
+   * No-op in JS fallback mode.
+   * @param {number} absIdx
+   */
+  navigateToCandidate(absIdx) {
+    if (!this._useWasm || !this._wasm) return;
+    const total = this._wasm.mie_cand_count();
+    if (total <= 0) return;
+    const target = ((absIdx % total) + total) % total;
+    const cur = this._wasm.mie_selected_abs();
+    if (cur === target) return;
+    let forward  = (target - cur + total) % total;
+    let backward = total - forward;
+    const key = forward <= backward ? KEYCODE.RIGHT : KEYCODE.LEFT;
+    const steps = forward <= backward ? forward : backward;
+    for (let i = 0; i < steps; i++) {
+      this._wasm.mie_key(key, 1, this._now());
+      this._wasm.mie_key(key, 0, this._now());
+    }
+    this._pollWasmState();
+  }
+
   /** Reset composition state. */
   reset() {
     if (this._useWasm && this._wasm) {

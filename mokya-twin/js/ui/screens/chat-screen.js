@@ -222,6 +222,23 @@ export class ChatScreen extends BaseScreen {
   }
 
   handleKeyDown({ key }) {
+    // Width-packed candidate paging: UP/DOWN flip the renderer's display-page
+    // and snap firmware's selection to the new page's first slot. Only kicks
+    // in when there are candidates and more than one display-page; otherwise
+    // the press falls through to MIE (firmware emits cursor:move when there
+    // are no candidates).
+    if ((key.fn === 'UP' || key.fn === 'DOWN') &&
+        this._compState.allCandidates.length > 0) {
+      const info = this.r.getDisplayPageInfo();
+      if (info.pageCount > 1) {
+        const next = key.fn === 'UP'
+          ? (info.page - 1 + info.pageCount) % info.pageCount
+          : (info.page + 1) % info.pageCount;
+        this.r.setDisplayPage(next);
+        this.mie.navigateToCandidate(info.pages[next].start);
+        return;
+      }
+    }
     this.mie.processKeyDown({ key });
   }
 

@@ -68,6 +68,33 @@ export class MokyaRenderer {
 
     // Track dirty regions to avoid full redraws (future optimization)
     this._dirtyRects = [];
+
+    // Display-pages computed by _drawCandRow each frame from the current
+    // candidate widths; UP/DOWN flip _displayPage. Each entry: { start, count }.
+    this._displayPages = [];
+    this._displayPage  = 0;
+  }
+
+  /**
+   * Snapshot of the candidate display-pagination state, computed on the most
+   * recent _drawCandRow call. Used by chat-screen to translate UP/DOWN into
+   * page-flip + firmware selection navigation.
+   * @returns {{ page: number, pageCount: number, pages: { start: number, count: number }[] }}
+   */
+  getDisplayPageInfo() {
+    return {
+      page:      this._displayPage,
+      pageCount: this._displayPages.length,
+      pages:     this._displayPages.slice(),
+    };
+  }
+
+  /** Set the active display-page index (clamped). Caller is responsible for
+   *  also moving the firmware selection (e.g. via mie.navigateToCandidate). */
+  setDisplayPage(idx) {
+    if (this._displayPages.length === 0) { this._displayPage = 0; return; }
+    const n = this._displayPages.length;
+    this._displayPage = ((idx % n) + n) % n;
   }
 
   // ── Full screen clear ────────────────────────────────────────
@@ -353,7 +380,7 @@ export class MokyaRenderer {
 
     this.ctx.font = this.F.ZH_MD;
 
-    // Prefer the full list so the row can overflow firmware's 5-per-page.
+    // Prefer the full list so we can pack our own width-fit pages.
     // Fall back to the page slice if the full list isn't provided.
     const all = (state.allCandidates && state.allCandidates.length)
                 ? state.allCandidates
@@ -361,7 +388,8 @@ export class MokyaRenderer {
     if (all.length === 0) {
       this.ctx.fillStyle = this.C.TEXT_MUTED;
       this.ctx.fillText('(按鍵開始輸入)', TAG_W + 5, midY);
-      this._candWindowStart = 0;
+      this._displayPages = [];
+      this._displayPage  = 0;
       return;
     }
 
@@ -371,40 +399,53 @@ export class MokyaRenderer {
                 ? state.selectedAbs
                 : (state.selIdx ?? 0);
 
-    // Width budget. Reserve a small gutter on each side; no page indicator.
-    const startX = TAG_W + 5;
-    const endX   = this.W - 3;
-    const PAD    = 6;   // space between candidates (in px)
-    const SLOT_X_PAD = 6; // horizontal padding inside each candidate slot
+    // Width budget. Reserve room on the right for a "n/N" page indicator.
+    const startX     = TAG_W + 5;
+    const PAD        = 6;   // gap between candidate slots
+    const SLOT_X_PAD = 6;   // horizontal padding inside each slot
+    const IND_W      = 26;  // reserved gutter for page indicator
+    const endX       = this.W - 3 - IND_W;
 
-    // Compute candidate widths once.
+    // Pre-measure all candidate slot widths.
     const widths = all.map(c => this.ctx.measureText(c).width + SLOT_X_PAD);
 
-    // Maintain a sliding window start so the selected candidate is visible.
-    if (this._candWindowStart === undefined) this._candWindowStart = 0;
-    let ws = this._candWindowStart;
-    if (sel < ws) ws = sel;                       // scroll left to reveal sel
-
-    // Scroll right until sel fits within [ws .. ws+fit).
-    // Compute how many from ws fit in the row width; if sel outside, advance ws.
-    const fitFrom = (from) => {
-      let x = startX, n = 0;
-      for (let i = from; i < all.length; i++) {
-        const w = widths[i] + (n > 0 ? PAD : 0);
-        if (x + w > endX) break;
-        x += w; n++;
+    // Greedy width-packed pagination: each page fits as many candidates as
+    // the row width allows, in order. A candidate that exceeds the row on
+    // its own gets its own page (forced).
+    const pages = [];
+    {
+      let i = 0;
+      while (i < all.length) {
+        const start = i;
+        let x = startX;
+        let n = 0;
+        for (; i < all.length; i++) {
+          const w = widths[i] + (n > 0 ? PAD : 0);
+          if (x + w > endX && n > 0) break;
+          x += w; n++;
+        }
+        pages.push({ start, count: Math.max(n, 1) });
       }
-      return n;
-    };
-    while (sel >= ws + fitFrom(ws) && ws < all.length - 1) ws++;
-    this._candWindowStart = ws;
+    }
+    this._displayPages = pages;
 
-    // Render the visible slice.
+    // Auto-snap: if sel is outside the current page, jump to the page that
+    // contains it (covers LEFT/RIGHT/TAB-driven selection moves).
+    const cur = this._displayPages[this._displayPage];
+    const inCur = cur && sel >= cur.start && sel < cur.start + cur.count;
+    if (!inCur) {
+      const containing = pages.findIndex(p => sel >= p.start && sel < p.start + p.count);
+      this._displayPage = containing >= 0 ? containing : 0;
+    }
+    if (this._displayPage >= pages.length) this._displayPage = 0;
+
+    // Render the active page only.
+    const page = pages[this._displayPage];
     let x = startX;
-    for (let i = ws; i < all.length; i++) {
-      const w = widths[i] + (i > ws ? PAD : 0);
-      if (x + w > endX) break;
-      const slotX = x + (i > ws ? PAD : 0);
+    for (let k = 0; k < page.count; k++) {
+      const i = page.start + k;
+      const w = widths[i] + (k > 0 ? PAD : 0);
+      const slotX = x + (k > 0 ? PAD : 0);
       const slotW = widths[i];
       const isSel = (i === sel);
       if (isSel) {
@@ -414,6 +455,16 @@ export class MokyaRenderer {
       this.ctx.fillStyle = isSel ? this.C.GREEN : this.C.TEXT;
       this.ctx.fillText(all[i], slotX + SLOT_X_PAD / 2, midY);
       x += w;
+    }
+
+    // Page indicator "n/N" on the right when more than one page exists.
+    if (pages.length > 1) {
+      this.ctx.font = this.F.XS;
+      this.ctx.fillStyle = this.C.TEXT_DIM;
+      this.ctx.textAlign = 'right';
+      this.ctx.fillText(`${this._displayPage + 1}/${pages.length}`,
+                        this.W - 3, midY);
+      this.ctx.textAlign = 'left';
     }
   }
 
