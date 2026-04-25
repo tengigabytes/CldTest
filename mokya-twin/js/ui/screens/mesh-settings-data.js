@@ -411,4 +411,5 @@ export const MESH_CONFIG_MENU = [
   { kind: 'group',     key: 'user',       label: '使用者' },
   { kind: 'modules',                       label: '模組設定' },
   { kind: 'channels',                      label: '頻道' },
+  { kind: 'reset',                         label: '重置為預設' },
 ];

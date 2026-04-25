@@ -14,6 +14,7 @@
 
 import { BaseScreen } from '../screen-manager.js';
 import { MESH_CONFIG_MENU, CONFIG_GROUPS } from './mesh-settings-data.js';
+import { reset as resetMeshConfig } from './mesh-config-store.js';
 
 const ROW_H        = 26;
 const VISIBLE_ROWS = 7;
@@ -25,6 +26,7 @@ export class MeshConfigScreen extends BaseScreen {
     this._sel  = 0;
     this._top  = 0;
     this._deps = deps;          // { settingsList, modulesList, channelsList }
+    this._toast = null;
   }
 
   render(now) {
@@ -60,11 +62,13 @@ export class MeshConfigScreen extends BaseScreen {
       r.drawLabel(14, y + 16, it.label, {
         font: r.F.ZH_MD, color: isSel ? r.C.GREEN : r.C.TEXT,
       });
-      // Right-side hint: "X 項" for groups, "▶" for sub-menus
+      // Right-side hint: "X 項" for groups, "▶" for sub-menus, custom for actions
       let hint;
       if (it.kind === 'group') {
         const grp = CONFIG_GROUPS[it.key];
         hint = grp ? `${grp.fields.length} 項 ▶` : '▶';
+      } else if (it.kind === 'reset') {
+        hint = '⚠';
       } else {
         hint = '▶';
       }
@@ -85,9 +89,16 @@ export class MeshConfigScreen extends BaseScreen {
       r.ctx.fillRect(trackX, thumbY, 2, thumbH);
     }
 
-    r.drawLabel(r.W / 2, 235, '▲▼ 選擇 · OK 進入 · BACK 返回', {
-      font: r.F.ZH_SM, color: r.C.TEXT_DIM, align: 'center',
-    });
+    if (this._toast && performance.now() < this._toast.until) {
+      r.drawCard(20, 200, r.W - 40, 22, { radius: 6, bg: r.C.SURFACE2, border: r.C.GREEN });
+      r.drawLabel(r.W / 2, 215, this._toast.text, {
+        font: r.F.ZH_SM, color: r.C.GREEN, align: 'center',
+      });
+    } else {
+      r.drawLabel(r.W / 2, 235, '▲▼ 選擇 · OK 進入 · BACK 返回', {
+        font: r.F.ZH_SM, color: r.C.TEXT_DIM, align: 'center',
+      });
+    }
   }
 
   handleKeyTap({ key }) {
@@ -105,6 +116,9 @@ export class MeshConfigScreen extends BaseScreen {
         this.goto('mesh-modules', 'slide_l');
       } else if (it.kind === 'channels') {
         this.goto('mesh-channels', 'slide_l');
+      } else if (it.kind === 'reset') {
+        resetMeshConfig();
+        this._toast = { text: '所有設定已重置為預設', until: performance.now() + 1500 };
       }
       return;
     }

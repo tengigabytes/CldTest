@@ -15,6 +15,7 @@
  */
 
 import { BaseScreen } from '../screen-manager.js';
+import { save as saveMeshConfig } from './mesh-config-store.js';
 
 export class FieldEditScreen extends BaseScreen {
   constructor(renderer, mie, serial) {
@@ -281,7 +282,10 @@ export class FieldEditScreen extends BaseScreen {
   }
 
   _commit() {
-    if (this._field) this._field.value = this._draft;
+    if (this._field) {
+      this._field.value = this._draft;
+      saveMeshConfig();
+    }
     this.goBack();
   }
 

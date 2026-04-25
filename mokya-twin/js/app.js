@@ -30,6 +30,7 @@ import { MeshtasticScreen }     from './ui/screens/meshtastic-screen.js';
 import { MessagesScreen }       from './ui/screens/messages-screen.js';
 import { NodesScreen }          from './ui/screens/nodes-screen.js';
 import { NodeDetailScreen }     from './ui/screens/node-detail-screen.js';
+import { ConnectScreen }        from './ui/screens/connect-screen.js';
 import { MeshConfigScreen }     from './ui/screens/mesh-config-screen.js';
 import { MeshModulesScreen }    from './ui/screens/mesh-modules-screen.js';
 import { MeshChannelsScreen }   from './ui/screens/mesh-channels-screen.js';
@@ -54,7 +55,7 @@ async function boot() {
   // to the browser's native rasteriser inside the patched ctx.
   const miefFont = new MiefFont();
   try {
-    await miefFont.load(`./data/mie_unifont_16.bin?v=v28`);
+    await miefFont.load(`./data/mie_unifont_16.bin?v=v29`);
     installMiefFont(display.getContext(), miefFont);
     console.log(`[App] Unifont loaded — ${miefFont.glyphCount} glyphs`);
   } catch (err) {
@@ -82,7 +83,7 @@ async function boot() {
   // after the Service Worker cache is evicted. Bump MIE_ASSET_VER in
   // lockstep with sw.js CACHE_VERSION whenever any dict or wasm asset is
   // rebuilt so the query string changes.
-  const MIE_ASSET_VER = 'v28';
+  const MIE_ASSET_VER = 'v29';
   const v = `?v=${MIE_ASSET_VER}`;
   await mie.loadWasm(`./wasm/mie_core.wasm${v}`);
 
@@ -128,7 +129,7 @@ async function boot() {
   screens.register('nodes',       new NodesScreen(renderer, mie, serial, { nodeDetail }));
   screens.register('node-detail', nodeDetail);
   screens.register('chat',        new ChatScreen(renderer, mie, serial));
-  screens.register('connect',     new PlaceholderScreen(renderer, mie, serial, '連接'));
+  screens.register('connect',     new ConnectScreen(renderer, mie, serial));
   // Top-level menu targets
   // mesh-config is a tree: MeshConfigScreen → SettingsListScreen / MeshModulesScreen / MeshChannelsScreen.
   // The shared SettingsListScreen instance is mutated via setData() before each navigation.
