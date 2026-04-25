@@ -1,4 +1,12 @@
-import { decodeFromRadio, encodeWantConfig } from './meshtastic-frame.js';
+import {
+  decodeFromRadio, encodeWantConfig,
+  encodeTextMessage, encodeTraceroute,
+  encodeRequestPosition, encodeRequestTelemetry,
+  encodeAdminReboot, encodeAdminShutdown, encodeAdminRemoveNode,
+  encodeAdminSetFavorite, encodeAdminRemoveFavorite,
+  encodeAdminSetIgnored, encodeAdminRemoveIgnored,
+  parseNodeId, BROADCAST_NUM,
+} from './meshtastic-frame.js';
 
 /**
  * MeshtasticSerial — Web Serial API bridge to physical Meshtastic device
@@ -107,22 +115,88 @@ export class MeshtasticSerial extends EventTarget {
   /**
    * Send a text message to the mesh.
    * In SIMULATION mode, echoes to localStorage.
-   * In USB mode, encodes as Meshtastic protobuf over serial.
+   * In USB mode, encodes a real Meshtastic ToRadio packet on
+   * TEXT_MESSAGE_APP, optionally addressed to a specific node.
    * @param {string} text
+   * @param {{ to?: string|number, channel?: number, wantAck?: boolean }} [opts]
    */
-  async sendTextMessage(text) {
+  async sendTextMessage(text, opts = {}) {
     if (this.state !== SerialState.CONNECTED) {
-      // Simulation mode: store locally
       this._simulateSend(text);
       return;
     }
-    try {
-      const payload = this._encodeTextMessage(text);
-      await this._writer.write(payload);
-      this._emit('serial:sent', { text });
-    } catch (err) {
-      this._emit('serial:error', { message: err.message });
-    }
+    const toNum = typeof opts.to === 'string' ? parseNodeId(opts.to)
+                : typeof opts.to === 'number' ? opts.to >>> 0
+                                              : BROADCAST_NUM;
+    const payload = encodeTextMessage(text, {
+      to:      toNum,
+      channel: opts.channel ?? 0,
+      wantAck: opts.wantAck ?? false,
+    });
+    await this._writeToRadio(payload);
+    this._emit('serial:sent', { text, to: opts.to ?? null });
+  }
+
+  /** `--traceroute --dest !id` — send TRACEROUTE_APP packet, want_response. */
+  async sendTraceroute(toIdOrNum, channel = 0) {
+    this._requireConnected();
+    const toNum = this._toNum(toIdOrNum);
+    await this._writeToRadio(encodeTraceroute(toNum, channel));
+  }
+
+  /** `--request-position --dest !id`. */
+  async requestPosition(toIdOrNum, channel = 0) {
+    this._requireConnected();
+    await this._writeToRadio(encodeRequestPosition(this._toNum(toIdOrNum), channel));
+  }
+
+  /** `--request-telemetry --dest !id`. */
+  async requestTelemetry(toIdOrNum, channel = 0) {
+    this._requireConnected();
+    await this._writeToRadio(encodeRequestTelemetry(this._toNum(toIdOrNum), channel));
+  }
+
+  /** Admin: `--reboot --dest !id`. */
+  async adminReboot(toIdOrNum, seconds = 5) {
+    this._requireConnected();
+    await this._writeToRadio(encodeAdminReboot(this._toNum(toIdOrNum), seconds));
+  }
+  /** Admin: `--shutdown --dest !id`. */
+  async adminShutdown(toIdOrNum, seconds = 5) {
+    this._requireConnected();
+    await this._writeToRadio(encodeAdminShutdown(this._toNum(toIdOrNum), seconds));
+  }
+  /** Admin: `--remove-node !id` (sent to local node, target_num = removed node). */
+  async adminRemoveNode(targetIdOrNum) {
+    this._requireConnected();
+    await this._writeToRadio(encodeAdminRemoveNode(BROADCAST_NUM, this._toNum(targetIdOrNum)));
+  }
+  /** Admin: `--{set,remove}-favorite-node !id`. */
+  async adminSetFavorite(targetIdOrNum, on = true) {
+    this._requireConnected();
+    const num = this._toNum(targetIdOrNum);
+    await this._writeToRadio(on ? encodeAdminSetFavorite(BROADCAST_NUM, num)
+                                  : encodeAdminRemoveFavorite(BROADCAST_NUM, num));
+  }
+  /** Admin: `--{set,remove}-ignored-node !id`. */
+  async adminSetIgnored(targetIdOrNum, on = true) {
+    this._requireConnected();
+    const num = this._toNum(targetIdOrNum);
+    await this._writeToRadio(on ? encodeAdminSetIgnored(BROADCAST_NUM, num)
+                                  : encodeAdminRemoveIgnored(BROADCAST_NUM, num));
+  }
+
+  // ── Internal send helpers ─────────────────────────────────
+  async _writeToRadio(toRadioBytes) {
+    await this._writer.write(this._frameToRadio(toRadioBytes));
+  }
+  _requireConnected() {
+    if (this.state !== SerialState.CONNECTED)
+      throw new Error('Not connected — connect first');
+  }
+  _toNum(idOrNum) {
+    if (typeof idOrNum === 'number') return idOrNum >>> 0;
+    return parseNodeId(idOrNum);
   }
 
   // ── Receive loop ─────────────────────────────────────────────

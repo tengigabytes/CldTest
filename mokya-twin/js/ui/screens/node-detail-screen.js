@@ -20,6 +20,7 @@ import {
   NODES, NODE_ACTIONS, buildNodeInfoFields,
   pushAckResult, pushTracerouteResult, pushSignalSample, formatRelativeTime,
 } from './nodes-data.js';
+import { SerialState } from '../../serial/meshtastic-serial.js';
 
 const TAB_INFO    = 0;
 const TAB_ACTIONS = 1;
@@ -315,85 +316,140 @@ export class NodeDetailScreen extends BaseScreen {
   _runAction(id) {
     const n = this._node;
     const idShort = n.user.id;
+    const live = this.serial?.state === SerialState.CONNECTED;
     let msg;
     switch (id) {
       case 'send-dm':
-        // Set chat-screen's conversation context to this node before navigating.
         if (this._deps?.chatScreen) {
           this._deps.chatScreen.setRecipient(n.user.id, n.user.long_name);
         }
         this.goto('chat', 'slide_l');
         return;
-      case 'sendtext-ack': {
-        // Mirrors `meshtastic --sendtext "ping" --ack --dest !id`. The
-        // routing ACK comes from the FIRST hop only, so for hops_away≥2
-        // a successful ACK does not imply end-to-end delivery.
-        const directNeighbour = n.hops_away <= 1;
-        const baseLatency = directNeighbour ? 80 : 60;
-        const jitter      = directNeighbour ? 200 : 140;
-        const latency = baseLatency + Math.floor(Math.random() * jitter);
-        const ok      = n.rssi !== null && Math.random() > 0.05;
-        const hop     = directNeighbour ? 1 : 1; // ACK is always next-hop
-        pushAckResult(n, latency, hop, ok);
-        if (ok) {
-          // Sample the link towards the first hop (we may not be the
-          // target, but the radio interaction is real).
-          const rssi = (n.rssi + ((Math.random() - 0.5) * 4)) | 0;
-          const snr  = Math.round((n.snr + (Math.random() - 0.5) * 1.5) * 10) / 10;
-          pushSignalSample(n, rssi, snr);
+
+      case 'sendtext-ack':
+        if (live) {
+          this.serial.sendTextMessage('ping', { to: n.user.id, wantAck: true })
+            .catch(err => this._setToast(`✗ ${err.message}`));
+          msg = `→ sendtext "ping" --ack ${idShort}  …等待 ACK`;
+        } else {
+          msg = this._mockSendtextAck(n);
         }
-        const tag = directNeighbour ? '' : ' (next-hop)';
-        msg = ok
-          ? `→ sendtext --ack  ✓ ${latency} ms${tag}`
-          : `→ sendtext --ack  ✗ 逾時`;
         break;
-      }
-      case 'traceroute': {
-        const myId  = '!MOKYA-LOC';
-        const others = NODES.filter(o => o !== n).map(o => o.user.id);
-        // Build a plausible hop chain of length = hops_away.
-        const intermediates = shuffle(others).slice(0, Math.max(0, n.hops_away - 1));
-        const hops = [myId, ...intermediates, n.user.id];
-        const snr_per_hop = hops.slice(1).map(() => Math.round((n.snr + (Math.random() - 0.5) * 2) * 10) / 10);
-        pushTracerouteResult(n, hops, snr_per_hop);
-        const path = hops.map(h => h.replace(/^!/, '')).join('→');
-        msg = `→ Traceroute  ${path}`;
+
+      case 'traceroute':
+        if (live) {
+          this.serial.sendTraceroute(n.user.id)
+            .catch(err => this._setToast(`✗ ${err.message}`));
+          msg = `→ traceroute ${idShort}  …等待回應`;
+        } else {
+          msg = this._mockTraceroute(n);
+        }
         break;
-      }
+
       case 'req-pos':
-        msg = `→ --request-position ${idShort}  ✓ 已送出`;
+        if (live) {
+          this.serial.requestPosition(n.user.id)
+            .catch(err => this._setToast(`✗ ${err.message}`));
+        }
+        msg = `→ request-position ${idShort}  ${live ? '✓ 已送出' : '(mock)'}`;
         break;
+
       case 'req-tel':
-        msg = `→ --request-telemetry ${idShort}  ✓ 已送出`;
+        if (live) {
+          this.serial.requestTelemetry(n.user.id)
+            .catch(err => this._setToast(`✗ ${err.message}`));
+        }
+        msg = `→ request-telemetry ${idShort}  ${live ? '✓ 已送出' : '(mock)'}`;
         break;
+
       case 'reboot':
-        msg = `→ --reboot ${idShort}  ⚠ 需 admin 通道`;
+        if (live) {
+          this.serial.adminReboot(n.user.id, 5)
+            .catch(err => this._setToast(`✗ ${err.message}`));
+          msg = `→ reboot ${idShort}  ✓ 已送出 (admin)`;
+        } else {
+          msg = `→ reboot ${idShort}  ⚠ 需連線 + admin 通道`;
+        }
         break;
+
       case 'shutdown':
-        msg = `→ --shutdown ${idShort}  ⚠ 需 admin 通道`;
+        if (live) {
+          this.serial.adminShutdown(n.user.id, 5)
+            .catch(err => this._setToast(`✗ ${err.message}`));
+          msg = `→ shutdown ${idShort}  ✓ 已送出 (admin)`;
+        } else {
+          msg = `→ shutdown ${idShort}  ⚠ 需連線 + admin 通道`;
+        }
         break;
+
       case 'toggle-fav':
         n.is_favorite = !n.is_favorite;
+        if (live) {
+          this.serial.adminSetFavorite(n.user.id, n.is_favorite)
+            .catch(err => this._setToast(`✗ ${err.message}`));
+        }
         msg = n.is_favorite
-          ? `→ --set-favorite-node ${idShort}`
-          : `→ --remove-favorite-node ${idShort}`;
+          ? `→ set-favorite-node ${idShort}${live ? '' : ' (本地)'}`
+          : `→ remove-favorite-node ${idShort}${live ? '' : ' (本地)'}`;
         break;
+
       case 'toggle-ign':
         n.is_ignored = !n.is_ignored;
+        if (live) {
+          this.serial.adminSetIgnored(n.user.id, n.is_ignored)
+            .catch(err => this._setToast(`✗ ${err.message}`));
+        }
         msg = n.is_ignored
-          ? `→ --set-ignored-node ${idShort}`
-          : `→ --remove-ignored-node ${idShort}`;
+          ? `→ set-ignored-node ${idShort}${live ? '' : ' (本地)'}`
+          : `→ remove-ignored-node ${idShort}${live ? '' : ' (本地)'}`;
         break;
+
       case 'remove': {
-        // `--remove-node !id`
+        if (live) {
+          this.serial.adminRemoveNode(n.user.id)
+            .catch(err => this._setToast(`✗ ${err.message}`));
+        }
         const i = NODES.indexOf(n);
         if (i >= 0) NODES.splice(i, 1);
         this.goBack();
         return;
       }
+
       default: msg = `${id}: ?`;
     }
-    this._toast = { text: msg, until: performance.now() + 2000 };
+    this._setToast(msg);
+  }
+
+  _setToast(text) {
+    this._toast = { text, until: performance.now() + 2000 };
+  }
+
+  // ── Mock fallback (used when not connected) ──────────────
+  _mockSendtextAck(n) {
+    const directNeighbour = n.hops_away <= 1;
+    const base = directNeighbour ? 80 : 60;
+    const jit  = directNeighbour ? 200 : 140;
+    const latency = base + Math.floor(Math.random() * jit);
+    const ok      = n.rssi !== null && Math.random() > 0.05;
+    pushAckResult(n, latency, 1, ok);
+    if (ok) {
+      const rssi = (n.rssi + ((Math.random() - 0.5) * 4)) | 0;
+      const snr  = Math.round((n.snr + (Math.random() - 0.5) * 1.5) * 10) / 10;
+      pushSignalSample(n, rssi, snr);
+    }
+    const tag = directNeighbour ? '' : ' (next-hop)';
+    return ok ? `→ sendtext --ack ✓ ${latency} ms${tag} (mock)`
+              : `→ sendtext --ack ✗ 逾時 (mock)`;
+  }
+  _mockTraceroute(n) {
+    const myId   = '!MOKYA-LOC';
+    const others = NODES.filter(o => o !== n).map(o => o.user.id);
+    const intermediates = shuffle(others).slice(0, Math.max(0, n.hops_away - 1));
+    const hops = [myId, ...intermediates, n.user.id];
+    const snr_per_hop = hops.slice(1).map(() => Math.round((n.snr + (Math.random() - 0.5) * 2) * 10) / 10);
+    pushTracerouteResult(n, hops, snr_per_hop);
+    const path = hops.map(h => h.replace(/^!/, '')).join('→');
+    return `→ traceroute  ${path} (mock)`;
   }
 
   _ensureInfoVisible(total) {

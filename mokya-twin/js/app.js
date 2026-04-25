@@ -60,7 +60,7 @@ async function boot() {
   // to the browser's native rasteriser inside the patched ctx.
   const miefFont = new MiefFont();
   try {
-    await miefFont.load(`./data/mie_unifont_16.bin?v=v31`);
+    await miefFont.load(`./data/mie_unifont_16.bin?v=v32`);
     installMiefFont(display.getContext(), miefFont);
     console.log(`[App] Unifont loaded — ${miefFont.glyphCount} glyphs`);
   } catch (err) {
@@ -88,7 +88,7 @@ async function boot() {
   // after the Service Worker cache is evicted. Bump MIE_ASSET_VER in
   // lockstep with sw.js CACHE_VERSION whenever any dict or wasm asset is
   // rebuilt so the query string changes.
-  const MIE_ASSET_VER = 'v31';
+  const MIE_ASSET_VER = 'v32';
   const v = `?v=${MIE_ASSET_VER}`;
   await mie.loadWasm(`./wasm/mie_core.wasm${v}`);
 

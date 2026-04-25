@@ -123,7 +123,11 @@ export class ChatScreen extends BaseScreen {
     this._messages.push(msg);
     this._scrollY = 9999;
     this._compState.committed = '';
-    this.serial.sendTextMessage(text);
+    // Route DMs to the recipient node, channel messages stay broadcast.
+    const opts = this._conversation.kind === 'dm'
+      ? { to: this._conversation.id, wantAck: true }
+      : { channel: this._conversation.id ?? 0 };
+    this.serial.sendTextMessage(text, opts);
   };
 
   _onSerialMessage = (e) => {
