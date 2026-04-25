@@ -161,8 +161,6 @@ export class SettingsScreen extends BaseScreen {
       mode:    'SYS',
     });
 
-    // ── Tab bar ───────────────────────────────────────────────────
-    r.drawTabBar(['💬 聊天', '🗺 地圖', '⚙ 設定'], 2);
   }
 
   // ── Row builders ─────────────────────────────────────────────
@@ -220,8 +218,7 @@ export class SettingsScreen extends BaseScreen {
   handleKeyTap({ key }) {
     if (key.fn === 'UP')   { this._scrollY = Math.max(0, this._scrollY - 20); return; }
     if (key.fn === 'DOWN') { this._scrollY += 20; return; }
-    if (key.fn === 'LEFT') { this.goto('map', 'slide_r'); return; }
-    if (key.fn === 'BACK') { this.goto('chat', 'slide_r'); return; }
+    if (key.fn === 'BACK') { this.goBack(); return; }
     if (key.fn === 'VOLUP') {
       this._brightness = Math.min(255, this._brightness + 20);
       this.r.d.setBrightness(this._brightness);

@@ -190,6 +190,6 @@ export class BaseScreen {
   handleKeyDown({ key }) { /* override */ }
 
   /** Navigate helper */
-  goto(name, transition) { this._manager?.navigateTo(name, transition); }
-  goBack()               { this._manager?.goBack(); }
+  goto(name, transition)         { this._manager?.navigateTo(name, transition); }
+  goBack(transition = 'slide_r') { this._manager?.goBack(transition); }
 }

@@ -1,12 +1,14 @@
 /**
- * ChatScreen — Meshtastic message list + MIE text input
+ * ChatScreen — Meshtastic message list + MIE text input.
  *
- * Layout (240 × 320):
- *   [0–17]    Status bar
- *   [18–255]  Message list (scrollable, 238px)
- *   [256–283] Composition / IME bar  (28px)
- *   [284–299] Input text preview bar (16px)
- *   [300–319] Tab bar (20px)
+ * Layout (320 × 240 landscape):
+ *   [0–17]   Status bar
+ *   [18–195] Message list (scrollable)
+ *   [196–217] Composition / IME bar (renderer.drawCompositionBar)
+ *   [218–239] Input text preview bar
+ *
+ * BACK (with no active composition) returns to the previous screen
+ * (typically the menu).
  */
 
 import { BaseScreen } from '../screen-manager.js';
@@ -205,8 +207,6 @@ export class ChatScreen extends BaseScreen {
       mode:    'LoRa',
     });
 
-    // ── Tab bar ───────────────────────────────────────────────────
-    r.drawTabBar(['💬 聊天', '🗺 地圖', '⚙ 設定'], 0);
   }
 
   handleKeyTap({ key, tapCount }) {
@@ -215,6 +215,7 @@ export class ChatScreen extends BaseScreen {
     const pendingLen = (this._compState.pending?.str ?? '').length;
     const pickerActive = !!this._compState.picker?.active;
     const hasComp = pendingLen > 0 || this._compState.candidates.length > 0 || pickerActive;
+    if (key.fn === 'BACK' && !hasComp) { this.goBack(); return; }
     if (key.fn === 'UP'   && !hasComp) { this._scrollY = Math.max(0, this._scrollY - 30); return; }
     if (key.fn === 'DOWN' && !hasComp) { this._scrollY = Math.min(this._maxScroll, this._scrollY + 30); return; }
     // Forward everything (including LEFT/RIGHT/UP/DOWN during composition) to MIE

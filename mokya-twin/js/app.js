@@ -24,6 +24,9 @@ import { ScreenManager }        from './ui/screen-manager.js';
 import { ChatScreen }           from './ui/screens/chat-screen.js';
 import { MapScreen }            from './ui/screens/map-screen.js';
 import { SettingsScreen }       from './ui/screens/settings-screen.js';
+import { HomeScreen }           from './ui/screens/home-screen.js';
+import { MenuScreen }           from './ui/screens/menu-screen.js';
+import { PlaceholderScreen }    from './ui/screens/placeholder-screen.js';
 import { MiefFont, installMiefFont } from './ui/mief-font.js';
 
 // ── Globals (accessible in console for dev) ──────────────────────
@@ -42,7 +45,7 @@ async function boot() {
   // to the browser's native rasteriser inside the patched ctx.
   const miefFont = new MiefFont();
   try {
-    await miefFont.load(`./data/mie_unifont_16.bin?v=v21`);
+    await miefFont.load(`./data/mie_unifont_16.bin?v=v22`);
     installMiefFont(display.getContext(), miefFont);
     console.log(`[App] Unifont loaded — ${miefFont.glyphCount} glyphs`);
   } catch (err) {
@@ -70,7 +73,7 @@ async function boot() {
   // after the Service Worker cache is evicted. Bump MIE_ASSET_VER in
   // lockstep with sw.js CACHE_VERSION whenever any dict or wasm asset is
   // rebuilt so the query string changes.
-  const MIE_ASSET_VER = 'v21';
+  const MIE_ASSET_VER = 'v22';
   const v = `?v=${MIE_ASSET_VER}`;
   await mie.loadWasm(`./wasm/mie_core.wasm${v}`);
 
@@ -107,9 +110,14 @@ async function boot() {
 
   // ── 6. Screen Manager ───────────────────────────────────────────
   screens = new ScreenManager(renderer);
-  screens.register('chat',     new ChatScreen(renderer, mie, serial));
-  screens.register('map',      new MapScreen(renderer, mie, serial));
-  screens.register('settings', new SettingsScreen(renderer, mie, serial));
+  screens.register('home',        new HomeScreen(renderer, mie, serial));
+  screens.register('menu',        new MenuScreen(renderer, mie, serial));
+  screens.register('chat',        new ChatScreen(renderer, mie, serial));
+  screens.register('mesh-config', new PlaceholderScreen(renderer, mie, serial, 'MESH 設定'));
+  screens.register('sensors',     new PlaceholderScreen(renderer, mie, serial, '感測器'));
+  screens.register('gnss',        new MapScreen(renderer, mie, serial));
+  screens.register('battery',     new PlaceholderScreen(renderer, mie, serial, '電池'));
+  screens.register('settings',    new SettingsScreen(renderer, mie, serial));
 
   // ── 7. Wire keyboard → MIE → screens ────────────────────────────
   keyboard.addEventListener('key:down', (e) => {
@@ -148,12 +156,9 @@ async function boot() {
     addDebugEntry('serial', `RX: ${e.detail.message.from}: ${e.detail.message.text}`);
   });
 
-  // Tab navigation via bottom tab bar click (HTML buttons)
-  bindTabBarClicks();
-
-  // Start on chat screen
+  // Boot into the Home screen — DPAD/OK opens the menu (no touch).
   updateSplash(96, 'Ready!');
-  screens.navigateTo('chat', 'none');
+  screens.navigateTo('home', 'none');
 
   updateSplash(100, '');
 
@@ -262,28 +267,6 @@ function scaleDevice() {
   const availW   = window.innerWidth - 8; // 4px margin each side
   const ratio    = Math.min(availW / naturalW, 1.6); // cap at 1.6× on desktop
   scaler.style.zoom = ratio;
-}
-
-// ── Tab bar click handler ─────────────────────────────────────────
-function bindTabBarClicks() {
-  // We'll render tab bar on canvas, but also intercept canvas clicks
-  const canvas = document.getElementById('screen-canvas');
-  canvas.addEventListener('click', (e) => {
-    const rect  = canvas.getBoundingClientRect();
-    const scaleX = canvas.width  / rect.width;
-    const scaleY = canvas.height / rect.height;
-    const cx = (e.clientX - rect.left) * scaleX;
-    const cy = (e.clientY - rect.top)  * scaleY;
-
-    // Tab bar: y 218–240, three equal columns (landscape 320×240)
-    if (cy >= 218) {
-      const tabW = 320 / 3;
-      const tabIdx = Math.floor(cx / tabW);
-      if (tabIdx === 0) screens.navigateTo('chat',     'fade');
-      else if (tabIdx === 1) screens.navigateTo('map', 'fade');
-      else                   screens.navigateTo('settings', 'fade');
-    }
-  });
 }
 
 // ── Serial UI bindings ────────────────────────────────────────────

@@ -97,8 +97,6 @@ export class MapScreen extends BaseScreen {
       mode:    'MAP',
     });
 
-    // ── Tab bar ───────────────────────────────────────────────────
-    r.drawTabBar(['💬 聊天', '🗺 地圖', '⚙ 設定'], 1);
   }
 
   _projectLatLon(lat, lon, contentTop, mapH) {
@@ -233,9 +231,7 @@ export class MapScreen extends BaseScreen {
       this._selectedNodeIdx = (this._selectedNodeIdx + 1) % this._nodes.length;
       return;
     }
-    // Tab navigation
-    if (key.fn === 'LEFT')  { this.goto('chat', 'slide_r'); return; }
-    if (key.fn === 'BACK')  { this.goto('chat', 'slide_r'); return; }
+    if (key.fn === 'BACK')  { this.goBack(); return; }
   }
 
   handleKeyDown({ key }) {

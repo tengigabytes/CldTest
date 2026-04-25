@@ -1,3 +1,5 @@
+import { ICONS } from './icons.js';
+
 /**
  * MokyaRenderer — LVGL-compatible Canvas Renderer
  *
@@ -68,6 +70,10 @@ export class MokyaRenderer {
 
     // Track dirty regions to avoid full redraws (future optimization)
     this._dirtyRects = [];
+
+    // Per-(icon, color) tinted offscreen tile cache, mirrors MiefFont's
+    // approach so a 1bpp blit keeps its alpha shape under drawImage.
+    this._iconCache = new Map();
 
     // Display-pages computed by _drawCandRow each frame from the current
     // candidate widths; UP/DOWN flip _displayPage. Each entry: { start, count }.
@@ -837,4 +843,99 @@ export class MokyaRenderer {
     if (cur) lines.push(cur);
     return lines;
   }
+
+  // ── Icons & menu grid ────────────────────────────────────────
+  /**
+   * Blit a 1bpp icon from `icons.js` at (x, y) tinted with `color`.
+   * Caches a per-(name, color) offscreen canvas so subsequent draws are
+   * a single drawImage call.
+   */
+  drawIcon(name, x, y, color = this.C.GREEN) {
+    const ic = ICONS[name];
+    if (!ic) return;
+    const key = `${name}|${color}`;
+    let tile = this._iconCache.get(key);
+    if (!tile) {
+      const c = document.createElement('canvas');
+      c.width = ic.w; c.height = ic.h;
+      const cctx = c.getContext('2d');
+      const img  = cctx.createImageData(ic.w, ic.h);
+      const data = img.data;
+      const [r, g, b, a] = parseHexColor(color);
+      const rowBytes = (ic.w + 7) >> 3;
+      for (let py = 0; py < ic.h; py++) {
+        for (let px = 0; px < ic.w; px++) {
+          const bit = (ic.bitmap[py * rowBytes + (px >> 3)] >> (7 - (px & 7))) & 1;
+          if (bit) {
+            const o = (py * ic.w + px) * 4;
+            data[o]     = r;
+            data[o + 1] = g;
+            data[o + 2] = b;
+            data[o + 3] = a;
+          }
+        }
+      }
+      cctx.putImageData(img, 0, 0);
+      tile = c;
+      this._iconCache.set(key, tile);
+    }
+    this.ctx.drawImage(tile, x | 0, y | 0);
+  }
+
+  /**
+   * Render a 3×N icon grid centered in (originX, originY, totalW, totalH).
+   * `items` is an array of `{ icon, label }`. The cell at `selectedIdx`
+   * gets a green border + muted-green fill highlight.
+   */
+  drawMenuGrid(items, selectedIdx, originX, originY, totalW, totalH) {
+    const COLS  = 3;
+    const ROWS  = Math.ceil(items.length / COLS);
+    const GAP_X = 6;
+    const GAP_Y = 6;
+    const cellW = Math.floor((totalW - GAP_X * (COLS + 1)) / COLS);
+    const cellH = Math.floor((totalH - GAP_Y * (ROWS + 1)) / ROWS);
+
+    for (let i = 0; i < items.length; i++) {
+      const r = (i / COLS) | 0;
+      const c = i % COLS;
+      const x = originX + GAP_X + c * (cellW + GAP_X);
+      const y = originY + GAP_Y + r * (cellH + GAP_Y);
+
+      const isSel = (i === selectedIdx);
+      this.drawCard(x, y, cellW, cellH, {
+        radius: 6,
+        bg:     isSel ? this.C.GREEN_MUTED : this.C.SURFACE,
+        border: isSel ? this.C.GREEN       : this.C.BORDER,
+      });
+
+      const item = items[i];
+      const ic   = ICONS[item.icon];
+      if (ic) {
+        const ix = x + ((cellW - ic.w) >> 1);
+        const iy = y + 8;
+        this.drawIcon(item.icon, ix, iy, isSel ? this.C.GREEN : this.C.TEXT);
+      }
+      if (item.label) {
+        this.drawLabel(x + cellW / 2, y + cellH - 8, item.label, {
+          font:     this.F.ZH_MD,
+          color:    isSel ? this.C.GREEN : this.C.TEXT,
+          align:    'center',
+          baseline: 'alphabetic',
+        });
+      }
+    }
+  }
+}
+
+function parseHexColor(s) {
+  if (typeof s === 'string' && s[0] === '#' && s.length === 7) {
+    return [
+      parseInt(s.slice(1, 3), 16),
+      parseInt(s.slice(3, 5), 16),
+      parseInt(s.slice(5, 7), 16),
+      255,
+    ];
+  }
+  // Fallback to white
+  return [255, 255, 255, 255];
 }
