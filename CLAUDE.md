@@ -97,8 +97,7 @@ If a push fails due to a transient network error, retry up to 4 times with expon
 
 ### Branch Scope
 
-- Develop all changes on the designated feature branch
-- Never push to `main` or `master` directly
+- Direct pushes to `main` are allowed
 - Do not create a pull request unless the user explicitly requests one
 
 ## GitHub Interactions
