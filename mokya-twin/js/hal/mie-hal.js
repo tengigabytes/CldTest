@@ -641,11 +641,21 @@ export class MIE_Bridge extends EventTarget {
     let committedNow = '';
     if (n > 0) {
       committedNow = this._readWasmStr(commitPtr);
-      this._pendingCommitted = (this._pendingCommitted ?? '') + committedNow;
-      this.dispatchEvent(new CustomEvent('composition:commit', { detail: { text: committedNow } }));
-      // Firmware's LruCache mutates on SmartZh candidate commits — schedule
-      // a debounced save so personalisation survives reloads.
-      this._saveLru();
+
+      // Firmware bug workaround:在 SmartZh + 累積無效 multitap pending +
+      // 連續按 OK 的情境下,firmware 會 emit 單一 '\n' (0x0A) 字元 commit
+      // (key_seq 不消耗,推測 candidates_[selected_] 越界讀到 0x0A memory)。
+      // '\n' 在訊息上下文無語意,EMU 也不支援單列換行;Unifont 對 '\n' 無
+      // glyph 會 fallback 渲染成類似空格,使用者誤判為「OK 變空格」。
+      // 直接 swallow '\n' / '\r' 單字元 commit;TAB ('\t') 是合法 TAB 鍵
+      // 輸入,保留。詳見 firmware/mie/src/ime_logic.cpp 待修。
+      if (committedNow !== '\n' && committedNow !== '\r') {
+        this._pendingCommitted = (this._pendingCommitted ?? '') + committedNow;
+        this.dispatchEvent(new CustomEvent('composition:commit', { detail: { text: committedNow } }));
+        // Firmware's LruCache mutates on SmartZh candidate commits — schedule
+        // a debounced save so personalisation survives reloads.
+        this._saveLru();
+      }
     }
     wasm.free(commitPtr);
 
