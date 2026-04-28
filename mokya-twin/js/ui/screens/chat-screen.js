@@ -386,15 +386,13 @@ export class ChatScreen extends BaseScreen {
     if (key.fn === 'BACK' && !hasComp) { this.goBack(); return; }
     if (key.fn === 'UP'   && !hasComp) { this._scrollY = Math.max(0, this._scrollY - 30); return; }
     if (key.fn === 'DOWN' && !hasComp) { this._scrollY = Math.min(this._maxScroll, this._scrollY + 30); return; }
-    // 模式 B 短按 OK = 換行(對齊 12-ime.md 鍵位行為表)。長按由
-    // handleKeyHold 處理為送出;若有 IME 候選字則交給 MIE commit candidate。
-    if (key.fn === 'OK' && !hasComp) {
-      const cur = this._compState.committed ?? '';
-      if (cur.length > 0) {
-        this._compState.committed = cur + '\n';
-      }
-      return;  // 不轉發給 MIE,避免空 buffer + OK 觸發 action:enter 立即送出
-    }
+    // 短按 OK 交給 MIE 處理:
+    //   有候選字 → MIE 確認該候選字
+    //   無候選字 + 有 committed → MIE action:enter → _sendBuffer 送出
+    //   完全空 buffer → MIE 不會做任何事
+    // 規格 12-ime.md 模式 B 短按 OK = 換行;但 chat 輸入框是單列無 word-wrap,
+    // 換行視覺會被當作空格,實作犧牲 spec 此點以保 UX。長按 OK 由
+    // handleKeyHold 處理為顯式送出(與 spec 一致)。
     // Forward everything (including LEFT/RIGHT/UP/DOWN during composition) to MIE
     this.mie.processKeyTap({ key, tapCount });
   }
