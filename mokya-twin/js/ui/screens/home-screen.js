@@ -17,6 +17,7 @@
  */
 
 import { BaseScreen } from '../screen-manager.js';
+import { listDraftIds, getDraft } from './drafts-store.js';
 
 // 行高分配(spec §行高分配)
 const Y_DASH_START   = 16;
@@ -192,40 +193,69 @@ export class HomeScreen extends BaseScreen {
     });
   }
 
+  /**
+   * 對齊 doc/ui/20-launcher-home.md §訊息區段條目(每筆 40 字位):
+   *   ▶👤阿明     09:38 ●2 我快到了五分鐘有
+   *   2 ▶ + 2 圖示 + 8 名稱 + 1 + 5 時間 + 1 + 3 ●N + 1 + 17 預覽 + 草稿 ✏
+   */
   _drawMessageRow(r, y, msg, isFocused) {
+    const ctx = r.ctx;
     // 焦點底色
     if (isFocused) {
-      r.ctx.fillStyle = r.C.FOCUS_BG;
-      r.ctx.fillRect(0, y, r.W, ROW_H);
+      ctx.fillStyle = r.C.FOCUS_BG;
+      ctx.fillRect(0, y, r.W, ROW_H);
     }
+    ctx.font          = r.F.ZH_SM;
+    ctx.textBaseline  = 'alphabetic';
+    ctx.textAlign     = 'left';
+    const baseline = y + 14;
+
+    // ▶ 焦點符(固定欄)
     let x = 4;
-    // ▶ 焦點符
     if (isFocused) {
-      r.drawLabel(x, y + 14, '▶', { font: r.F.ZH_SM, color: r.C.FOCUS });
+      ctx.fillStyle = r.C.FOCUS;
+      ctx.fillText('▶', x, baseline);
     }
-    x += 12;
+    x += 14;
+
     // 圖示(👤 DM / # 頻道 / 📢 廣播)
     const icon = msg.kind === 'dm' ? '👤' : (msg.kind === 'channel' ? '#' : '📢');
-    r.drawLabel(x, y + 14, icon, { font: r.F.ZH_SM, color: r.C.TEXT });
+    ctx.fillStyle = r.C.TEXT;
+    ctx.fillText(icon, x, baseline);
     x += 18;
-    // 名稱
-    const name = truncate(msg.from, 8);
-    r.drawLabel(x, y + 14, name, {
-      font: r.F.ZH_SM, color: isFocused ? r.C.FOCUS : r.C.TEXT,
-    });
-    // 時間 + 未讀
-    const tx = r.W - 4;
-    if (msg.unread > 0) {
-      r.drawLabel(tx, y + 14, `●${msg.unread} ${msg.time}`, {
-        font: r.F.ZH_SM, color: r.C.GREEN, align: 'right',
-      });
-    } else {
-      r.drawLabel(tx, y + 14, msg.time, {
-        font: r.F.ZH_SM, color: r.C.TEXT_DIM, align: 'right',
-      });
+
+    // 名稱(截 4 全形)
+    const name = truncate(msg.from, 4);
+    ctx.fillStyle = isFocused ? r.C.FOCUS : r.C.TEXT;
+    ctx.fillText(name, x, baseline);
+    x += 64;  // 留 8 半形字位 ≈ 64px,固定欄位讓後續對齊穩定
+
+    // 時間
+    const timeStr = String(msg.time || '');
+    ctx.fillStyle = r.C.TEXT_DIM;
+    ctx.fillText(timeStr, x, baseline);
+    x += ctx.measureText(timeStr).width + 6;
+
+    // 未讀 ●N(若 N>0)/ 草稿 ✏(若有草稿)
+    if (msg.draft) {
+      ctx.fillStyle = r.C.FOCUS;
+      ctx.fillText('✏', x, baseline);
+      x += 18;
+    } else if (msg.unread > 0) {
+      ctx.fillStyle = r.C.GREEN;
+      ctx.fillText(`●${msg.unread}`, x, baseline);
+      x += ctx.measureText(`●${msg.unread}`).width + 4;
     }
-    // 預覽(第二行,但版面只有 20px 一行 → 此 PR 簡化為靠中放預覽)
-    // 規格指預覽在同一行靠右,但空間有限;此 EMU 採實用變體
+
+    // 預覽(草稿時顯示草稿內容,否則顯示最後訊息預覽)
+    const previewText = msg.draft || msg.preview || '';
+    if (previewText) {
+      const remainW = r.W - x - 4;
+      ctx.fillStyle = msg.draft ? r.C.FOCUS_DIM
+                    : (msg.unread > 0 ? r.C.TEXT : r.C.TEXT_DIM);
+      const truncated = truncateToWidth(ctx, previewText, remainW);
+      ctx.fillText(truncated, x, baseline);
+    }
   }
 
   _drawEventRow(r, y, ev, isFocused) {
@@ -315,15 +345,24 @@ export class HomeScreen extends BaseScreen {
     // 取 sim messages 末段;尚無「對話列表」資料模型,此處用單一聚合
     const sims = this.serial.getSimMessages?.() ?? [];
     const recent = sims.slice(-3).reverse();
-    return recent.map((m, i) => ({
-      id:     m.id ?? i,
-      kind:   m.from?.startsWith('!') ? 'dm' : 'channel',
-      from:   m.from ?? '?',
-      time:   m.time ?? '—',
-      preview: m.text ?? '',
-      unread: this._dismissedMsgIds.has(m.id ?? i) ? 0 : 1,
-      read:   this._dismissedMsgIds.has(m.id ?? i),
-    }));
+    // 草稿 ID 集合(對齊 12-ime.md §對話列表草稿提示):chat-screen 用
+    // `chat:{kind}:{id}` 為 key,這裡同步推導。
+    const draftIds = new Set(listDraftIds());
+    return recent.map((m, i) => {
+      const id   = m.id ?? i;
+      const kind = m.from?.startsWith('!') ? 'dm' : 'channel';
+      const draftKey = `chat:${kind}:${id}`;
+      const draftEntry = draftIds.has(draftKey) ? getDraft(draftKey) : null;
+      return {
+        id, kind,
+        from:    m.from ?? '?',
+        time:    m.time ?? '—',
+        preview: m.text ?? '',
+        draft:   draftEntry?.text || '',
+        unread:  this._dismissedMsgIds.has(id) ? 0 : 1,
+        read:    this._dismissedMsgIds.has(id),
+      };
+    });
   }
 
   _eventList() {
@@ -356,6 +395,22 @@ function dateMmDdWe() {
   const we = ['Su','Mo','Tu','We','Th','Fr','Sa'][d.getDay()];
   return `${mm}-${dd} ${we}`;
 }
+/** 以畫布 ctx 當前字型量測,把字串截斷到最多 maxWidth 寬,超過加 …。 */
+function truncateToWidth(ctx, s, maxWidth) {
+  if (!s) return '';
+  if (ctx.measureText(s).width <= maxWidth) return s;
+  const ellipsis = '…';
+  const eW = ctx.measureText(ellipsis).width;
+  let lo = 0, hi = s.length;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    const w = ctx.measureText(s.slice(0, mid)).width + eW;
+    if (w <= maxWidth) lo = mid;
+    else               hi = mid - 1;
+  }
+  return s.slice(0, lo) + ellipsis;
+}
+
 function truncate(s, maxChars) {
   if (!s) return '';
   return s.length > maxChars ? s.slice(0, maxChars - 1) + '…' : s;
