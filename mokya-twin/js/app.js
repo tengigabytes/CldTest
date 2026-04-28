@@ -286,8 +286,10 @@ async function boot() {
   // MIE composition debug
   mie.addEventListener('composition:update', (e) => {
     const d = e.detail;
-    if (d.buffer?.length || d.committed) {
-      addDebugEntry('mie', `[${d.buffer?.join('')}] ${d.committed ?? ''}`);
+    // d.buffer is array in JS impl, string in WASM impl(== pending.str)
+    const bufStr = Array.isArray(d.buffer) ? d.buffer.join('') : (d.buffer ?? '');
+    if (bufStr.length || d.committed) {
+      addDebugEntry('mie', `[${bufStr}] ${d.committed ?? ''}`);
     }
   });
   mie.addEventListener('mode:change', (e) => {
