@@ -178,6 +178,21 @@ export class MIE_Bridge extends EventTarget {
       const candAfter  = this._wasm.mie_cand_count();
       console.log('[MIE-DBG] press done — inputAfter=%o cand=%d pending=%o',
         inputAfter, candAfter, this._pendingCommitted);
+
+      // Stuck-state detection:OK 鍵在「有 leftover input + 無候選字 +
+      // 按下後 input 完全沒變」表示 firmware ImeLogic 卡在無解狀態
+      // (key_seq 不消耗、cand_count_=0、無 multitap),user 連按 OK 都
+      // 沒進展。EMU 側自動呼叫 mie_clear_state 清空,讓 user 能重新輸入。
+      if (keycode === KEYCODE.OK
+          && this._inputBeforePress !== ''
+          && candAfter === 0
+          && inputAfter === this._inputBeforePress) {
+        console.warn('[MIE-DBG] OK stuck — input=%o cand=0 unchanged → mie_clear_state',
+          inputAfter);
+        this._wasm.mie_clear_state();
+        this._dbgKey = 'clear-state(stuck)';
+        this._pollWasmState();
+      }
     } else {
       this._jsImpl.processKeyDown(keyEvent);
     }
