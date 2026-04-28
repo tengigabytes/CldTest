@@ -19,16 +19,19 @@
 
 import { BaseScreen } from '../screen-manager.js';
 
+// 對齊 doc/ui/01-page-architecture.md L-1 九宮格九 App。
+// 第 9 格 EMU 是模擬器專屬入口(對應原本的 meshtastic 開發儀表),
+// 實機韌體可移除或替換。
 export const MENU_ITEMS = [
-  { icon: 'chat',     label: '訊息',   target: 'messages'    },
+  { icon: 'chat',     label: '訊息',   target: 'messages'      },
   { icon: 'mesh-cfg', label: '頻道',   target: 'mesh-channels' },
-  { icon: 'sensors',  label: '節點',   target: 'nodes'       },
-  { icon: 'gnss',     label: '地圖',   target: 'gnss'        },
-  { icon: 'battery',  label: '遙測',   target: 'battery'     },
-  { icon: 'settings', label: '工具',   target: 'tools'       },
-  { icon: 'mesh-cfg', label: '設定',   target: 'settings'    },
-  { icon: 'battery',  label: 'SOS',    target: 'sos'         },
-  { icon: 'sensors',  label: 'EMU',    target: 'meshtastic'  },
+  { icon: 'sensors',  label: '節點',   target: 'nodes'         },
+  { icon: 'gnss',     label: '地圖',   target: 'gnss'          },
+  { icon: 'battery',  label: '遙測',   target: 'telemetry'     },
+  { icon: 'settings', label: '工具',   target: 'tools'         },
+  { icon: 'mesh-cfg', label: '設定',   target: 'settings'      },
+  { icon: 'battery',  label: 'SOS',    target: 'sos-standby'   },
+  { icon: 'sensors',  label: 'EMU',    target: 'meshtastic'    },
 ];
 
 const COLS = 3;

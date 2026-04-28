@@ -74,7 +74,17 @@ export class MokyaRenderer {
       BUBBLE_IN:   TOKENS.bubble_in,          // #161C24
     };
 
-    // ── Font stack (mirrors LV_FONT_MONTSERRAT sizes) ────────────
+    // ── Font stack ───────────────────────────────────────────────
+    // 對齊 doc/ui/00-charter §字型策略「全程使用 GNU Unifont 16×16 點陣字」。
+    // 實際渲染由 mief-font.js 在 boot 時 hook 進 ctx.fillText/measureText,
+    // 把所有字串輸出強制走 Unifont bitmap blitter(CJK 16px 全形 / 西文 8×16
+    // 半形)。下方 px size 字串只作為 fallback 給未涵蓋的 codepoint(emoji
+    // 等)使用,不影響主要文案的 Unifont 顯示。
+    //
+    // 規格字級對照(實際輸出皆為 Unifont 16px;這裡只是 fallback 控制):
+    //   XS / ZH_SM = 14px(規格次文字,如 hint / 麵包屑 / 字數計數)
+    //   SM / ZH_MD = 16px(規格主文字,Unifont 一行)
+    //   LG / ZH_LG = 20px(規格大字,如選項標題)
     this.F = {
       XS:     '10px system-ui,sans-serif',
       SM:     '12px system-ui,sans-serif',
@@ -82,7 +92,7 @@ export class MokyaRenderer {
       LG:     '17px system-ui,sans-serif',
       XL:     '21px system-ui,sans-serif',
       MONO:   '11px "Courier New",monospace',
-      ZH_SM:  '13px "Noto Sans TC","PingFang TC",system-ui,sans-serif',
+      ZH_SM:  '14px "Noto Sans TC","PingFang TC",system-ui,sans-serif',
       ZH_MD:  '16px "Noto Sans TC","PingFang TC",system-ui,sans-serif',
       ZH_LG:  '20px "Noto Sans TC","PingFang TC",system-ui,sans-serif',
     };
@@ -193,9 +203,15 @@ export class MokyaRenderer {
     lx = drawAt(lx, '▼', rx ? C.GREEN : C.SURFACE3);
     lx += GAP_S;
 
-    // 3. 警告燈(條件;位置不保留以節省空間)
-    if (warn) {
-      lx = drawAt(lx, '⚠', C.WARNING);
+    // 3. 警告燈(規格:位置永遠保留以維持視覺穩定)
+    {
+      const warnGlyph = '⚠';
+      const wW = ctx.measureText(warnGlyph).width;
+      if (warn) {
+        lx = drawAt(lx, warnGlyph, C.WARNING);
+      } else {
+        lx += wW;  // 保留位置不繪
+      }
       lx += GAP_S;
     }
 
@@ -230,11 +246,17 @@ export class MokyaRenderer {
       lx += GAP_M;
     }
 
-    // 6. 未讀訊息(條件)
-    if (unread > 0) {
-      lx = drawAt(lx, '✉', C.GREEN);
-      lx = drawAt(lx, unread > 9 ? '9+' : String(unread), C.GREEN);
-      lx += GAP_S;
+    // 6. 未讀訊息(規格:位置永遠保留)
+    {
+      const unreadGlyph = '✉';
+      const reservedW   = ctx.measureText(unreadGlyph).width
+                        + ctx.measureText('9+').width;
+      const slotEnd = lx + reservedW;
+      if (unread > 0) {
+        const after1 = drawAt(lx, unreadGlyph, C.GREEN);
+        drawAt(after1, unread > 9 ? '9+' : String(unread), C.GREEN);
+      }
+      lx = slotEnd + GAP_S;
     }
 
     // ── 右半:從右往左排(模式 → 電量) ──────────────────────────
@@ -254,11 +276,16 @@ export class MokyaRenderer {
       rxEdge -= GAP_M;
     }
 
-    // 7. 電量(模式左側)
+    // 7. 電量(模式左側)— 規格門檻 10-status-bar.md:
+    //   >30%      主色
+    //   15-30%    黃
+    //   5-15%     紅(邊界 15 屬黃,5 屬紅閃)
+    //   <5%       紅閃(由整條覆蓋 alert='lowBatt' 處理)
     {
       let batColor = C.TEXT;
-      if (battery <= 15)       batColor = C.DANGER;
-      else if (battery <= 30)  batColor = C.WARNING;
+      if (battery > 30)        batColor = C.TEXT;
+      else if (battery >= 15)  batColor = C.WARNING;
+      else                     batColor = C.DANGER;
       const glyph  = charging ? '⚡' : (battery >= 99 ? '▪' : '▣');
       const pctStr = Math.max(0, Math.min(100, battery | 0)) + '%';
       rxEdge = drawAtRight(rxEdge, pctStr, batColor);

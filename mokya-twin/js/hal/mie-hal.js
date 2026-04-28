@@ -731,13 +731,15 @@ export class MIE_Bridge extends EventTarget {
  */
 function mapEngineModeToSpec(raw) {
   switch (raw) {
-    case '中':       return '注';
-    case 'EN':       return 'EN';
-    case 'ABC':      return 'Ab';
-    case 'ZHUYIN':   return '注';
-    case 'ENGLISH':  return 'EN';
-    case 'NUMERIC':  return 'Num';
-    case 'SYMBOL':   return 'Ab';
-    default:         return 'Op';
+    case '中':            return '注';
+    case 'EN':            return 'EN';
+    case 'ABC':           return 'Ab';
+    case 'ZHUYIN':        return '注';
+    case 'ENGLISH':       return 'EN';
+    case 'AB_MULTITAP':   return 'Ab';
+    case 'NUMERIC':       return 'Num';
+    case 'SYMBOL':        return 'Ab';   // legacy alias
+    case 'OP':            return 'Op';
+    default:              return 'Op';
   }
 }

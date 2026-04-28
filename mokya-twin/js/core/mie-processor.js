@@ -27,12 +27,24 @@
 import { MIE_Trie }  from './mie-trie.js';
 import { MIE_Timer } from './mie-timer.js';
 
-/** Input modes */
+/**
+ * Input modes — 對齊 doc/ui/12-ime.md §App 端 widget API ime_mode_t。
+ *
+ *   OP            焦點導航(無 IME)
+ *   ZHUYIN  = 注  注音輸入(JS impl 主路徑)
+ *   ENGLISH = EN  英文字典 multitap
+ *   AB_MULTITAP = Ab  純 multitap,無字典(支援大小寫切換 via CapsLock)
+ *   NUMERIC = Num 數字輸入
+ *
+ * SYMBOL 為實作早期保留的歷史值,目前由 picker overlay 取代。
+ */
 export const InputMode = Object.freeze({
-  ZHUYIN:  'ZHUYIN',
-  ENGLISH: 'ENGLISH',
-  NUMERIC: 'NUMERIC',
-  SYMBOL:  'SYMBOL',
+  OP:          'OP',
+  ZHUYIN:      'ZHUYIN',
+  ENGLISH:     'ENGLISH',
+  AB_MULTITAP: 'AB_MULTITAP',
+  NUMERIC:     'NUMERIC',
+  SYMBOL:      'SYMBOL',  // legacy
 });
 
 /** Zhuyin composition states */
@@ -354,9 +366,19 @@ export class MIE_Processor extends EventTarget {
     this._emit('action:enter', { text });
   }
 
+  /**
+   * 對齊 doc/ui/12-ime.md 鍵位行為表 MODE 鍵:
+   *   注 → EN → Ab → Num → 注
+   */
   _cycleMode() {
-    const modes = [InputMode.ZHUYIN, InputMode.ENGLISH, InputMode.NUMERIC];
-    const next = modes[(modes.indexOf(this.mode) + 1) % modes.length];
+    const modes = [
+      InputMode.ZHUYIN,
+      InputMode.ENGLISH,
+      InputMode.AB_MULTITAP,
+      InputMode.NUMERIC,
+    ];
+    const idx  = modes.indexOf(this.mode);
+    const next = modes[(idx >= 0 ? (idx + 1) : 0) % modes.length];
     this._resetComposition();
     this.mode = next;
     this._emit('mode:change', { mode: next });
