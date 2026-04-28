@@ -235,9 +235,47 @@ export class ChatScreen extends BaseScreen {
     r.drawStatusBar({
       time:    new Date().toLocaleTimeString('zh-TW', { hour:'2-digit', minute:'2-digit' }),
       battery: this._fakeBattery(now),
-      rssi:    this._rssiHistory[this._rssiHistory.length - 1] ?? -90,
+      mode:    this.mie.currentMode,   // IME 啟動時自動顯示 注/EN/Ab/Num
     });
 
+    // ── Hint Bar(子模式)— 對齊 doc/ui/12-ime.md 鍵位行為表 ──────
+    // 訊息對話 = 模式 B 全螢幕編輯;OK 短按換行、長按送出。Composition Bar
+    // 顯示時(有候選字)由其自身佔位,此時 Hint Bar 暫不疊畫避免重疊。
+    const pendingLen = (this._compState.pending?.str ?? '').length;
+    const hasComp = pendingLen > 0
+                 || this._compState.candidates.length > 0
+                 || !!this._compState.picker?.active;
+    if (!hasComp) {
+      r.drawHintBar([
+        { key: 'OK',   label: '換行' },
+        { key: 'OK⌘',  label: '送出' },
+        { key: 'BCK',  label: '存草稿' },
+        { key: 'MODE', label: '切 IME' },
+      ]);
+    }
+  }
+
+  /**
+   * 長按事件(對齊 doc/ui/12-ime.md):
+   *   MODE 長按 → CapsLock
+   *   OK   長按 → 模式 B 送出(目前轉發給 MIE 由其決定 commit / send)
+   *   BACK 長按 → 鎖屏(暫由 console 觀察,鎖屏螢幕未實作)
+   */
+  handleKeyHold({ key }) {
+    if (key.fn === 'MODE') {
+      const on = this.mie.toggleCapsLock?.();
+      console.log('[Chat] CapsLock', on ? 'ON' : 'OFF');
+      return;
+    }
+    if (key.fn === 'OK') {
+      // 模式 B:長按 OK = 送出。MIE 已有 send 路徑;此處只觸發即可。
+      this.mie.processKeyTap?.({ key, tapCount: 1, longPress: true });
+      return;
+    }
+    if (key.fn === 'BACK') {
+      console.log('[Chat] BACK long-press → 鎖屏(尚未實作)');
+      return;
+    }
   }
 
   handleKeyTap({ key, tapCount }) {

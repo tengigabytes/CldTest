@@ -211,6 +211,19 @@ export class MIE_Bridge extends EventTarget {
   }
 
   /**
+   * 規格模式名(對齊 doc/ui/12-ime.md):
+   *   Op | 注 | EN | Ab | Num
+   *
+   * 從 WASM("中"/"EN"/"ABC")或 JS impl("ZHUYIN"/"ENGLISH"/"NUMERIC"/
+   * "SYMBOL")的引擎內部名映射為規格名。引擎尚未支援 Num 細分時,固定
+   * 回 'Op'(無 IME 啟動)。
+   */
+  getSpecMode() {
+    const raw = this.getModeStr();
+    return mapEngineModeToSpec(raw);
+  }
+
+  /**
    * Single-snapshot pending view matching mie::PendingView. Style values:
    *   0 = None, 1 = PrefixBold, 2 = Inverted.
    * matchedPrefixBytes counts UTF-8 bytes (not codepoints) of the matched
@@ -418,7 +431,30 @@ export class MIE_Bridge extends EventTarget {
     this._saveLruNow();
   }
 
-  get currentMode()    { return this._useWasm ? this.getModeStr() : this._jsImpl.mode; }
+  /**
+   * UI 顯示用的模式字串。對齊 doc/ui/10-status-bar.md / 12-ime.md 的
+   * 五模式(Op | 注 | EN | Ab | Num)。**此 getter 是 Status Bar 與
+   * Hint Bar 的單一真相來源**;舊呼叫端會自動拿到規格名。
+   */
+  get currentMode() { return this.getSpecMode(); }
+
+  /** 引擎原生模式字串(WASM:中/EN/ABC;JS:ZHUYIN/ENGLISH/...)。 */
+  get rawMode()     { return this._useWasm ? this.getModeStr() : (this._jsImpl.mode ?? ''); }
+
+  /**
+   * Toggle CapsLock(對齊 doc/ui/12-ime.md MODE 長按)。
+   *
+   * 目前 WASM 引擎尚未暴露 caps_lock API,JS impl 也無原生支援 — 此方法
+   * 維持 JS 端旗標 + 派發 'capslock:change' 事件供上層 UI 反應(例如
+   * Status Bar / Hint Bar 顯示鎖頭圖示)。實際 multitap 大小寫切換由
+   * 引擎更新後接管。
+   */
+  toggleCapsLock() {
+    this._capsLock = !this._capsLock;
+    this._emit('capslock:change', { capsLock: !!this._capsLock });
+    return !!this._capsLock;
+  }
+  get capsLock() { return !!this._capsLock; }
   get inputText()      { return this._useWasm ? this.getInputStr() : this._jsImpl.inputText; }
   get isWasmActive()   { return this._useWasm; }
   get isDictLoaded()   { return this._dictionaryLoaded; }
@@ -676,5 +712,32 @@ export class MIE_Bridge extends EventTarget {
 
   _emit(type, detail) {
     this.dispatchEvent(new CustomEvent(type, { detail }));
+  }
+}
+
+/**
+ * 引擎內部模式字串 → doc/ui/12-ime.md 規格五模式。
+ *
+ * | 引擎來源              | 對應規格   |
+ * |-----------------------|-----------|
+ * | "中"  (WASM SmartZh)  | 注        |
+ * | "EN"  (WASM SmartEn)  | EN        |
+ * | "ABC" (WASM Direct)   | Ab        |
+ * | "ZHUYIN"  (JS impl)   | 注        |
+ * | "ENGLISH" (JS impl)   | EN        |
+ * | "NUMERIC" (JS impl)   | Num       |
+ * | "SYMBOL"  (JS impl)   | Ab        |
+ * | "" / 其他             | Op        |
+ */
+function mapEngineModeToSpec(raw) {
+  switch (raw) {
+    case '中':       return '注';
+    case 'EN':       return 'EN';
+    case 'ABC':      return 'Ab';
+    case 'ZHUYIN':   return '注';
+    case 'ENGLISH':  return 'EN';
+    case 'NUMERIC':  return 'Num';
+    case 'SYMBOL':   return 'Ab';
+    default:         return 'Op';
   }
 }
