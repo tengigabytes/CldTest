@@ -87,9 +87,10 @@ export class FieldEditScreen extends BaseScreen {
     r.clear();
 
     r.drawStatusBar({
-      time:    new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' }),
-      battery: 75,
-      mode:    this._field?.type === 'string' ? this.mie.currentMode : 'Op',
+      time:     new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' }),
+      battery:  75,
+      mode:     this._field?.type === 'string' ? this.mie.currentMode : 'Op',
+      capsLock: this._field?.type === 'string' && !!this.mie.capsLock,
     });
 
     const fld = this._field;

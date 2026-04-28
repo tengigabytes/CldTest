@@ -171,8 +171,43 @@ async function boot() {
   screens.register('sos',           new SOSScreen(renderer, mie, serial));
   screens.register('lock',          new LockScreen(renderer, mie, serial));
 
-  // L-1 九宮格的尚未細部規劃 App,以 placeholder 接住(對齊 doc/ui/01-page-architecture.md)
-  screens.register('tools',     new PlaceholderScreen(renderer, mie, serial, '工具 (T-0)'));
+  // L-1 九宮格直接 navigate 的入口 + 67 頁中尚未細部規劃的 App,以
+  // placeholder 接住,避免按下九宮格無反應(對齊 doc/ui/01-page-architecture.md)。
+  // 後續 PR 會逐個替換成具體 screen。
+  const ph = (label) => new PlaceholderScreen(renderer, mie, serial, label);
+  // 工具 T 群
+  screens.register('tools',         ph('工具 (T-0)'));
+  screens.register('traceroute',    ph('Traceroute (T-1)'));
+  screens.register('range-test',    ph('Range Test (T-2)'));
+  screens.register('rssi-scan',     ph('訊號頻譜 (T-3)'));
+  screens.register('packet-sniff',  ph('封包嗅探 (T-4)'));
+  screens.register('lora-self-test',ph('LoRa 自我測試 (T-5)'));
+  screens.register('gnss-sky',      ph('GNSS 衛星圖 (T-6)'));
+  screens.register('admin-pair',    ph('配對碼顯示 (T-7)'));
+  screens.register('fw-info',       ph('韌體資訊 (T-8)'));
+  // 遙測 F 群
+  screens.register('telemetry',     ph('遙測 (F-1)'));
+  screens.register('env-sensor',    ph('環境感測 (F-2)'));
+  screens.register('neighbor-info', ph('鄰居資訊 (F-3)'));
+  screens.register('telemetry-hist',ph('歷史曲線 (F-4)'));
+  // SOS Z 群(Z-2 啟動已由 SOSScreen 處理,綁 'sos')
+  screens.register('sos-standby',   ph('SOS 待機 (Z-1)'));
+  screens.register('sos-config',    ph('SOS 設定 (Z-3)'));
+  // 訊息 A 群
+  screens.register('msg-detail',    ph('訊息詳情 (A-3)'));
+  screens.register('canned',        ph('預設訊息 (A-4)'));
+  // 頻道 B 群
+  screens.register('channel-join',  ph('加入頻道 (B-3)'));
+  screens.register('channel-share', ph('分享頻道 (B-4)'));
+  // 節點 C 群
+  screens.register('node-actions',  ph('節點操作 (C-3)'));
+  screens.register('my-node',       ph('我的節點 (C-4)'));
+  // 地圖 D 群(D-1=gnss 已有 MapScreen)
+  screens.register('map-layers',    ph('圖層切換 (D-2)'));
+  screens.register('waypoint-list', ph('航點清單 (D-3)'));
+  screens.register('waypoint-detail', ph('航點詳情 (D-4)'));
+  screens.register('waypoint-add',  ph('新增航點 (D-5)'));
+  screens.register('waypoint-nav',  ph('航點導航 (D-6)'));
 
   // 啟動時清掉超過 30 天的草稿(規格 §草稿生命週期)
   cleanupOlderDays(30);

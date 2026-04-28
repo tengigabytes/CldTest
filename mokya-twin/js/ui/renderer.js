@@ -154,6 +154,7 @@ export class MokyaRenderer {
       time = '--:--', battery = 0, charging = false, mode = 'Op',
       mesh = 0, gps = 'off', unread = 0, warn = false,
       tx = false, rx = false, alert, alertText,
+      capsLock = false,
     } = opts;
     const y = 0, h = 16;
     const C = this.C;
@@ -269,10 +270,14 @@ export class MokyaRenderer {
 
     let rxEdge = this.W - 4;
 
-    // 8. 模式(最右)
+    // 8. 模式(最右)+ CapsLock 鎖頭(僅 IME 啟動 + capsLock=true 時顯示)
     {
       const isIme = (mode !== 'Op');
       rxEdge = drawAtRight(rxEdge, mode, isIme ? C.FOCUS : C.TEXT);
+      if (isIme && capsLock) {
+        rxEdge -= 2;
+        rxEdge = drawAtRight(rxEdge, '🔒', C.FOCUS);
+      }
       rxEdge -= GAP_M;
     }
 

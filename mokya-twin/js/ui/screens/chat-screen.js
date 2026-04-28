@@ -313,9 +313,10 @@ export class ChatScreen extends BaseScreen {
 
     // ── Status bar ────────────────────────────────────────────────
     r.drawStatusBar({
-      time:    new Date().toLocaleTimeString('zh-TW', { hour:'2-digit', minute:'2-digit' }),
-      battery: this._fakeBattery(now),
-      mode:    this.mie.currentMode,   // IME 啟動時自動顯示 注/EN/Ab/Num
+      time:     new Date().toLocaleTimeString('zh-TW', { hour:'2-digit', minute:'2-digit' }),
+      battery:  this._fakeBattery(now),
+      mode:     this.mie.currentMode,   // IME 啟動時自動顯示 注/EN/Ab/Num
+      capsLock: !!this.mie.capsLock,    // Ab/EN multitap 大小寫鎖(MODE 長按切換)
     });
 
     // ── Hint Bar(子模式)— 對齊 doc/ui/12-ime.md 鍵位行為表 ──────
