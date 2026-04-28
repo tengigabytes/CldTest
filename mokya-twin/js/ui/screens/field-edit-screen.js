@@ -79,7 +79,7 @@ export class FieldEditScreen extends BaseScreen {
       time:    new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' }),
       battery: 75,
       rssi:    -82,
-      mode:    this._field?.type === 'string' ? (this.mie.currentMode || '注') : 'Op',
+      mode:    this._field?.type === 'string' ? this.mie.currentMode : 'Op',
     });
 
     const fld = this._field;
@@ -108,9 +108,30 @@ export class FieldEditScreen extends BaseScreen {
         });
     }
 
-    r.drawLabel(r.W / 2, 235, this._hint(fld.type), {
-      font: r.F.ZH_SM, color: r.C.TEXT_DIM, align: 'center',
-    });
+    // Hint Bar(G-2):編輯態屬於子模式,規格要求顯示。Composition Bar 顯示時
+    // 由 _renderString 自行畫(在 IME Bar 之上),這裡只在非 string 編輯時畫。
+    if (fld.type !== 'string') {
+      r.drawHintBar(this._hintBarItems(fld.type));
+    } else {
+      r.drawHintBar(this._hintBarItems('string'));
+    }
+  }
+
+  /** Hint Bar 鍵位提示(對齊 doc/ui/12-ime.md 鍵位行為表)。 */
+  _hintBarItems(type) {
+    switch (type) {
+      case 'bool':
+        return [{ key: '◀▶', label: '切換' }, { key: 'OK', label: '儲存' }, { key: 'BCK', label: '取消' }];
+      case 'enum':
+        return [{ key: '▲▼', label: '選擇' }, { key: 'OK', label: '儲存' }, { key: 'BCK', label: '取消' }];
+      case 'int':
+      case 'float':
+        return [{ key: '▲▼', label: '±1' }, { key: '◀▶', label: '±10' }, { key: 'OK', label: '儲存' }, { key: 'BCK', label: '取消' }];
+      case 'string':
+        return [{ key: 'MODE', label: '切 IME' }, { key: 'OK', label: '儲存' }, { key: 'BCK', label: '取消' }];
+      default:
+        return [{ key: 'OK', label: '儲存' }, { key: 'BCK', label: '取消' }];
+    }
   }
 
   // ── Per-type renderers ──────────────────────────────────────
@@ -215,6 +236,25 @@ export class FieldEditScreen extends BaseScreen {
   }
 
   // ── Key handling ────────────────────────────────────────────
+  /**
+   * 長按事件(對齊 doc/ui/12-ime.md):
+   *   MODE 長按 → CapsLock(string 編輯時生效)
+   *   OK   長按 → 模式 A 同短按(即 commit + 退出)
+   *   BACK 長按 → 鎖屏(留 PR 待實作)
+   */
+  handleKeyHold({ key }) {
+    const t = this._field?.type;
+    if (key.fn === 'MODE' && t === 'string') {
+      const on = this.mie.toggleCapsLock?.();
+      console.log('[FieldEdit] CapsLock', on ? 'ON' : 'OFF');
+      return;
+    }
+    if (key.fn === 'OK') {
+      this._commit();    // 模式 A:長按 = 同短按
+      return;
+    }
+  }
+
   handleKeyTap({ key, tapCount }) {
     const fn = key.fn;
     if (!this._field) { if (fn === 'BACK') this.goBack(); return; }
@@ -293,16 +333,6 @@ export class FieldEditScreen extends BaseScreen {
     this.goBack();
   }
 
-  _hint(type) {
-    switch (type) {
-      case 'bool':   return '◀▶▲▼ 切換 · OK 儲存 · BACK 取消';
-      case 'enum':   return '▲▼ 選擇 · OK 儲存 · BACK 取消';
-      case 'int':
-      case 'float':  return 'OK 儲存 · BACK 取消';
-      case 'string': return '輸入文字 · OK 儲存 · BACK 取消';
-      default:       return 'OK 儲存 · BACK 取消';
-    }
-  }
 }
 
 function round2(x) { return Math.round(x * 100) / 100; }
