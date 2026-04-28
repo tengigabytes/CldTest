@@ -338,14 +338,32 @@ export class FieldEditScreen extends BaseScreen {
     r.ctx.fillStyle = r.C.SURFACE;
     r.ctx.fillRect(10, frameY + 2, r.W - 20, frameH - 4);
 
-    // 已輸入文本 + Preedit + 字數計數
+    // 已輸入文本(主色)+ inline preedit(橙背景塊 + 游標)+ 字數計數
     const padX = 14;
-    const display = text;
-    const showPlaceholder = (display === '');
-    r.drawLabel(padX, frameY + 16, showPlaceholder ? '(空)' : display, {
-      font: r.F.ZH_MD,
-      color: showPlaceholder ? r.C.TEXT_DIM : r.C.TEXT,
-      maxWidth: r.W - padX - 64,
+    const baseline = frameY + 16;
+    const showPlaceholder = (text === '');
+    if (showPlaceholder) {
+      // 規格:無內容時不顯示空文字,只顯示 inline preedit + 游標
+      // 但若連 preedit 也沒有,顯示 (空) 提示
+      const pendingStr = this.mie.getPendingView?.()?.str ?? '';
+      if (pendingStr.length === 0 && !this.mie.currentMode) {
+        r.drawLabel(padX, baseline, '(空)', {
+          font: r.F.ZH_MD, color: r.C.TEXT_DIM,
+        });
+      }
+    } else {
+      r.ctx.font         = r.F.ZH_MD;
+      r.ctx.fillStyle    = r.C.TEXT;
+      r.ctx.textAlign    = 'left';
+      r.ctx.textBaseline = 'alphabetic';
+      r.ctx.fillText(text, padX, baseline);
+    }
+    // Inline preedit 緊接已 commit 文字之後
+    let cursorX = padX + (showPlaceholder ? 0 : r.ctx.measureText(text).width);
+    const pending = this.mie.getPendingView?.() ?? { str: '', matchedPrefixBytes: 0, style: 0 };
+    const blink   = ((performance.now() / 500) | 0) % 2 === 0;
+    r.drawInlinePreedit(cursorX, baseline, pending, {
+      cursorBlink: blink, height: frameH - 4,
     });
 
     // 字數 N/Max(顏色依規格門檻)
@@ -373,22 +391,15 @@ export class FieldEditScreen extends BaseScreen {
       });
     }
 
-    // ── MIE composition bar(緊鄰 IME Bar 上方;沿用既有元件) ──
-    const pending  = (this.mie.getPendingView?.() ?? { str: '', matchedPrefixBytes: 0, style: 0 });
+    // ── IME Bar(規格 12-ime.md §IME Bar 18px 單列,有候選字才繪) ──
     const allCands = (this.mie.getAllCandidates?.() ?? []);
-    const selAbs   = (this.mie.getSelectedAbs?.() ?? 0);
     const picker   = (this.mie.getPicker?.() ?? { active: false, cells: [], cols: 0, selected: 0 });
     r.drawCompositionBar({
-      committedLeft:  '',
-      committedRight: '',
-      pending,
-      allCandidates:  allCands,
-      candidates:     allCands,
-      selectedAbs:    selAbs,
-      selIdx:         this.mie.getPageSel?.() ?? 0,
-      mode:           this.mie.currentMode || '',
+      allCandidates: allCands,
+      candidates:    allCands,
+      selectedAbs:   (this.mie.getSelectedAbs?.() ?? 0),
+      selIdx:        this.mie.getPageSel?.() ?? 0,
       picker,
-      cursorBlink:    ((performance.now() / 500) | 0) % 2 === 0,
     });
   }
 

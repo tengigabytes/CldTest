@@ -304,59 +304,147 @@ export class MokyaRenderer {
     this.ctx.textBaseline = 'alphabetic';
   }
 
-  // ── Composition / IME Bar ─────────────────────────────────────
+  // ── IME Bar ──────────────────────────────────────────────────
   /**
-   * Draw the MIE input composition area.
-   * Sits just above the tab bar: y=H-22-28=H-50, h=28
-   * @param {string}   committed  already-committed text
-   * @param {string[]} buffer     active phoneme sequence e.g. ["ㄅ","ㄚ"]
-   * @param {string[]} candidates candidate characters
-   * @param {number}   selIdx     selected candidate index
-   * @param {string}   mode       input mode label
-   */
-  /**
-   * Two-row MIE display inspired by firmware mie_repl.cpp.
-   * Row order (top → bottom): 候選, 文字.
+   * 對齊 doc/ui/12-ime.md §IME Bar v1.0
    *
-   * The 候選 row no longer numbers entries (the user navigates with
-   * ←/→) and it packs as many candidates as will fit in the row's
-   * width; the sliding window keeps the selected candidate visible
-   * when the full list overflows.
+   * 18px 單列,顯隱條件:有候選字才畫,無則完全省略。
+   *
+   *   ►鐘 中 種 眾 重 仲 鍾 終 ‹1/3›
+   *
+   * 規格配色:
+   *   行背景      #161C24 (bg_secondary)
+   *   上邊框      #30363D (border_normal)  1px
+   *   ► 標記      #FFA657 (accent_focus)
+   *   選中候選字  #FFA657 (accent_focus)
+   *   其他候選字  #E6EDF3 (text_primary)
+   *   ‹n/N› 頁碼  #7D8590 (text_secondary)
+   *
+   * Preedit 不在此繪製 — 規格 §Preedit 視覺要求 preedit 必須 **inline 顯示在文字
+   * 框內、游標位置**;由 screen 自行在自己的輸入框中呼叫 drawInlinePreedit()。
+   *
+   * Picker(SYM 長按符號表)維持原行為,接管整個 IME Bar 區。
+   *
+   * 位置:y = H - 22(tab bar) - 18 = H - 40
+   *
+   * 為了保留既有 caller 的呼叫簽名(chat-screen / field-edit-screen),
+   * 函式名仍為 drawCompositionBar;state.committedLeft / committedRight /
+   * pending / cursorBlink 在新版本被忽略(由 caller 自行 inline 畫 preedit)。
    *
    * @param {{
-   *   committedLeft:  string,
-   *   committedRight: string,
-   *   pending:        { str: string, matchedPrefixBytes: number, style: number },
-   *   allCandidates:  string[],     // full merged list
-   *   candidates:     string[],     // firmware page slice (fallback)
-   *   selectedAbs:    number,       // absolute index into allCandidates
-   *   selIdx:         number,       // within-page index (fallback)
-   *   cursorBlink:    boolean,
+   *   candidates:     string[],
+   *   allCandidates:  string[],
+   *   selectedAbs:    number,
+   *   selIdx:         number,
+   *   picker:         { active, cells, cols, selected },
    * }} state
    */
   drawCompositionBar(state) {
-    const CAND_H = 22;
-    const TEXT_H = 22;
-    const BAR_Y  = this.H - 22 /* tab bar */ - CAND_H - TEXT_H;
+    const BAR_H = 18;
+    // 規格:IME Bar 緊貼螢幕底,與 Hint Bar 互斥(同位置)。
+    // Caller 負責在 IME Bar 顯示時不再呼叫 drawHintBar。
+    const BAR_Y = this.H - BAR_H;
 
-    // ── Backdrop ───────────────────────────────────────────────────
-    this.ctx.fillStyle = '#161618';
-    this.ctx.fillRect(0, BAR_Y, this.W, CAND_H + TEXT_H);
+    // 顯隱:無候選且非 picker → 不繪(規格)
+    const all = (state.allCandidates && state.allCandidates.length)
+                ? state.allCandidates
+                : (state.candidates ?? []);
+    const pickerActive = !!state.picker?.active;
+    if (all.length === 0 && !pickerActive) return;
+
+    // 行背景 + 上邊框
+    this.ctx.fillStyle = this.C.SURFACE;
+    this.ctx.fillRect(0, BAR_Y, this.W, BAR_H);
     this.ctx.fillStyle = this.C.BORDER;
     this.ctx.fillRect(0, BAR_Y, this.W, 1);
-    this.ctx.fillRect(0, BAR_Y + CAND_H, this.W, 1);
 
-    // ── Row 1 (top): 候選 ───────────────────────────────────────────
-    this._drawCandRow(state, BAR_Y, CAND_H);
+    // Picker 接管(SYM 長按);否則畫候選列
+    if (pickerActive) {
+      this._drawPickerRow(state.picker, 4, BAR_Y, BAR_H);
+    } else {
+      this._drawCandRow(state, BAR_Y, BAR_H);
+    }
 
-    // ── Row 2 (bottom): 文字 ────────────────────────────────────────
-    this._drawTextRow(state, BAR_Y + CAND_H, TEXT_H);
-
-    this.ctx.textAlign   = 'left';
+    this.ctx.textAlign    = 'left';
     this.ctx.textBaseline = 'alphabetic';
   }
 
-  _drawTextRow({ committedLeft, committedRight, pending, cursorBlink }, y, h) {
+  /**
+   * Inline preedit + 游標 — 在 screen 的文字框內呼叫。
+   *
+   * 對齊 doc/ui/12-ime.md §Preedit 視覺。
+   *   - 已確認文本由 caller 自畫(主色,無背景)
+   *   - 此 helper 畫 preedit 字串 + 背景塊 + 游標
+   *
+   * @param {number} x      起始 x(已確認文本之後的位置)
+   * @param {number} yBase  baseline y(配 'alphabetic' 對齊;呼叫端常用 row mid+5)
+   * @param {{ str: string, matchedPrefixBytes: number, style: number }} pending
+   * @param {{ font?: string, cursorBlink?: boolean, height?: number }} [opts]
+   * @returns {number} 已使用的水平寬度(含 preedit + 游標)
+   */
+  drawInlinePreedit(x, yBase, pending, opts = {}) {
+    const ctx     = this.ctx;
+    const C       = this.C;
+    const font    = opts.font   ?? this.F.ZH_MD;
+    const blink   = opts.cursorBlink !== false;
+    const blockH  = opts.height ?? 18;
+    const blockTop = yBase - blockH + 4;
+
+    ctx.font          = font;
+    ctx.textAlign     = 'left';
+    ctx.textBaseline  = 'alphabetic';
+
+    let used = 0;
+    const pv = pending ?? { str: '', matchedPrefixBytes: 0, style: 0 };
+    const s  = pv.str ?? '';
+    if (s.length > 0) {
+      const w = ctx.measureText(s).width;
+      // 規格背景塊:深橙低飽和(bg_preedit #2A2018)
+      ctx.fillStyle = C.FOCUS_BG;
+      this._roundRectFill(x - 2, blockTop, w + 4, blockH, 1);
+
+      if (pv.style === 1 /* PrefixBold */) {
+        const mp = pv.matchedPrefixBytes | 0;
+        const prefix = mp > 0 ? this._utf8Slice(s, 0, mp) : '';
+        const rest   = mp > 0 ? this._utf8Slice(s, mp)    : s;
+        let cx = x;
+        if (prefix) {
+          ctx.font = 'bold ' + font;
+          ctx.fillStyle = C.FOCUS;
+          ctx.fillText(prefix, cx, yBase);
+          cx += ctx.measureText(prefix).width;
+          ctx.font = font;
+        }
+        if (rest) {
+          ctx.fillStyle = C.FOCUS_DIM;
+          ctx.fillText(rest, cx, yBase);
+        }
+      } else {
+        // None / Inverted 都用 preedit 橙(規格沒列 Inverted 變體,簡化處理)
+        ctx.fillStyle = C.FOCUS;
+        ctx.fillText(s, x, yBase);
+      }
+      used += w;
+    }
+
+    // 游標 ▌ 1Hz 閃爍 — 規格指此游標亦為橙色
+    const curW = 2;
+    if (blink) {
+      ctx.fillStyle = C.FOCUS;
+      ctx.fillRect(x + used, blockTop + 2, curW, blockH - 4);
+    }
+    used += curW + 1;
+    return used;
+  }
+
+  /** 圓角矩形 fill 便利方法。 */
+  _roundRectFill(x, y, w, h, r) {
+    this.ctx.beginPath();
+    this._roundRect(x, y, w, h, r);
+    this.ctx.fill();
+  }
+
+  _drawTextRow_LEGACY_UNUSED({ committedLeft, committedRight, pending, cursorBlink }, y, h) {
     const midY   = y + h / 2;
     const labelX = 2;
     const TAG_W  = 26;  // "文字" label column width
@@ -442,91 +530,67 @@ export class MokyaRenderer {
     }
   }
 
+  /**
+   * 對齊 doc/ui/12-ime.md §IME Bar 候選字列版面:
+   *   ►鐘 中 種 眾 重 仲 鍾 終 ‹1/3›
+   * - ► 領頭橙色;選中候選字橙色;其他主色;頁碼 ‹n/N› 次色靠右
+   * - 候選間距使用 1 全形空白(視覺上)
+   */
   _drawCandRow(state, y, h) {
-    const midY  = y + h / 2;
-    const TAG_W = 30;
+    const midY = y + h / 2;
+    const ctx  = this.ctx;
+    const C    = this.C;
 
-    // Mode chip (replaces the 候選 label; shows the active IME mode so the
-    // user can tell SmartZh / SmartEn / Direct apart at a glance).
-    const modeStr = state.mode || '';
-    this.ctx.font        = this.F.XS;
-    this.ctx.textBaseline = 'middle';
-    if (modeStr) {
-      const w = this.ctx.measureText(modeStr).width + 8;
-      const cx = 2, cy = y + 3;
-      this.ctx.fillStyle = this.C.FOCUS;
-      this.ctx.fillRect(cx, cy, w, h - 6);
-      this.ctx.fillStyle = this.C.BG;
-      this.ctx.textAlign = 'center';
-      this.ctx.fillText(modeStr, cx + w / 2, midY);
-      this.ctx.textAlign = 'left';
-    }
+    ctx.font          = this.F.ZH_MD;
+    ctx.textBaseline  = 'middle';
+    ctx.textAlign     = 'left';
 
-    this.ctx.fillStyle = this.C.BORDER;
-    this.ctx.fillRect(TAG_W, y + 3, 1, h - 6);
-
-    // SYM1 long-press symbol picker takes over the candidate area while
-    // active. Firmware intercepts all DPAD/OK/SYM1 routing — we just
-    // render the current snapshot.
-    if (state.picker && state.picker.active) {
-      this._drawPickerRow(state.picker, TAG_W + 5, y, h);
-      return;
-    }
-
-    this.ctx.font = this.F.ZH_MD;
-
-    // Prefer the full list so we can pack our own width-fit pages.
-    // Fall back to the page slice if the full list isn't provided.
+    // 候選來源:優先 allCandidates 用以做 width-pack 分頁
     const all = (state.allCandidates && state.allCandidates.length)
                 ? state.allCandidates
                 : (state.candidates ?? []);
-    if (all.length === 0) {
-      this.ctx.fillStyle = this.C.TEXT_MUTED;
-      this.ctx.fillText('(按鍵開始輸入)', TAG_W + 5, midY);
-      this._displayPages = [];
-      this._displayPage  = 0;
-      return;
-    }
-
-    // Absolute selection; fall back to page-relative when the full list
-    // isn't available (JS fallback path).
     const sel = (state.selectedAbs !== undefined && state.selectedAbs !== null)
                 ? state.selectedAbs
                 : (state.selIdx ?? 0);
 
-    // Width budget. Reserve room on the right for a "n/N" page indicator.
-    const startX     = TAG_W + 5;
-    const PAD        = 6;   // gap between candidate slots
-    const SLOT_X_PAD = 6;   // horizontal padding inside each slot
-    const IND_W      = 26;  // reserved gutter for page indicator
-    const endX       = this.W - 3 - IND_W;
+    // 預留右側頁碼欄位寬度
+    const PAGE_GUTTER = 36;
+    const startX = 4;
+    const endX   = this.W - 3 - PAGE_GUTTER;
 
-    // Pre-measure all candidate slot widths.
-    const widths = all.map(c => this.ctx.measureText(c).width + SLOT_X_PAD);
+    // ► 領頭(規格)
+    const leadW = ctx.measureText('►').width + 4;
+    ctx.fillStyle = C.FOCUS;
+    ctx.fillText('►', startX, midY);
 
-    // Greedy width-packed pagination: each page fits as many candidates as
-    // the row width allows, in order. A candidate that exceeds the row on
-    // its own gets its own page (forced).
+    const candStartX = startX + leadW;
+    const SPACE_W    = ctx.measureText(' ').width;  // 半形空白寬
+
+    // 預先量度所有候選字寬度;間距使用 1 全形空白(等於 2 個半形)
+    const gap    = SPACE_W * 2;
+    const widths = all.map(c => ctx.measureText(c).width);
+
+    // Width-packed pagination
     const pages = [];
     {
       let i = 0;
       while (i < all.length) {
         const start = i;
-        let x = startX;
+        let x = candStartX;
         let n = 0;
         for (; i < all.length; i++) {
-          const w = widths[i] + (n > 0 ? PAD : 0);
+          const w = widths[i] + (n > 0 ? gap : 0);
           if (x + w > endX && n > 0) break;
-          x += w; n++;
+          x += w;
+          n++;
         }
         pages.push({ start, count: Math.max(n, 1) });
       }
     }
     this._displayPages = pages;
 
-    // Auto-snap: if sel is outside the current page, jump to the page that
-    // contains it (covers LEFT/RIGHT/TAB-driven selection moves).
-    const cur = this._displayPages[this._displayPage];
+    // Auto-snap to page containing selection
+    const cur = pages[this._displayPage];
     const inCur = cur && sel >= cur.start && sel < cur.start + cur.count;
     if (!inCur) {
       const containing = pages.findIndex(p => sel >= p.start && sel < p.start + p.count);
@@ -534,32 +598,26 @@ export class MokyaRenderer {
     }
     if (this._displayPage >= pages.length) this._displayPage = 0;
 
-    // Render the active page only.
+    // 繪製當前頁候選字
     const page = pages[this._displayPage];
-    let x = startX;
+    if (!page) return;
+    let x = candStartX;
     for (let k = 0; k < page.count; k++) {
       const i = page.start + k;
-      const w = widths[i] + (k > 0 ? PAD : 0);
-      const slotX = x + (k > 0 ? PAD : 0);
-      const slotW = widths[i];
+      if (k > 0) x += gap;
       const isSel = (i === sel);
-      if (isSel) {
-        this.ctx.fillStyle = this.C.FOCUS_BG;
-        this.ctx.fillRect(slotX - 1, y + 3, slotW + 1, h - 6);
-      }
-      this.ctx.fillStyle = isSel ? this.C.FOCUS : this.C.TEXT;
-      this.ctx.fillText(all[i], slotX + SLOT_X_PAD / 2, midY);
-      x += w;
+      ctx.fillStyle = isSel ? C.FOCUS : C.TEXT;
+      ctx.fillText(all[i], x, midY);
+      x += widths[i];
     }
 
-    // Page indicator "n/N" on the right when more than one page exists.
+    // 頁碼 ‹n/N›(規格;只在多頁時顯示)
     if (pages.length > 1) {
-      this.ctx.font = this.F.XS;
-      this.ctx.fillStyle = this.C.TEXT_DIM;
-      this.ctx.textAlign = 'right';
-      this.ctx.fillText(`${this._displayPage + 1}/${pages.length}`,
-                        this.W - 3, midY);
-      this.ctx.textAlign = 'left';
+      ctx.font      = this.F.ZH_SM;
+      ctx.fillStyle = C.TEXT_DIM;
+      ctx.textAlign = 'right';
+      ctx.fillText(`‹${this._displayPage + 1}/${pages.length}›`, this.W - 3, midY);
+      ctx.textAlign = 'left';
     }
   }
 

@@ -189,10 +189,16 @@ export class ChatScreen extends BaseScreen {
     const STATUS_BTM = 18;
     const HDR_H      = 16;          // conversation context bar
     const CONTENT_TOP = STATUS_BTM + HDR_H;
-    const TAB_H       = 22;
-    // Composition block = 文字 row (22) + 候選 row (22) = 44 when shown.
-    const COMP_H      = this._showComp ? 44 : 0;
-    const CONTENT_BTM = r.H - TAB_H - COMP_H;
+    // 對齊 doc/ui/12-ime.md:
+    //   IME Bar 18px 條件顯示(有候選字才畫,規格)
+    //   輸入框 22px(模式 B 規格中緊鄰 IME Bar 上方)— 顯示已 commit 文字 + inline preedit
+    //   Hint Bar 16px 在最底
+    // IME Bar 18px 與 Hint Bar 16px 互斥(同位置 — 緊貼螢幕底)
+    const hasComp = this._compHasContent();
+    const FOOT_H  = hasComp ? 18 : 16;
+    const INPUT_H = 22;
+    const INPUT_Y = r.H - FOOT_H - INPUT_H;
+    const CONTENT_BTM = INPUT_Y;
     const CONTENT_H   = CONTENT_BTM - CONTENT_TOP;
 
     // Conversation context bar
@@ -247,19 +253,54 @@ export class ChatScreen extends BaseScreen {
       r.ctx.fillRect(r.W - 3, indY, 2, indH);
     }
 
-    // ── Composition bar (候選 row on top, 文字 row on bottom) ─────
-    if (this._showComp) {
+    // ── 輸入框(模式 B,inline preedit + 游標)─────────────────────
+    // 對齊 doc/ui/12-ime.md §模式 B 訊息 App 對話內的特殊版面 — 輸入區
+    // 緊鄰 IME Bar 上方,使用者輸入時眼睛在「文字框 → 候選字」視線最短。
+    {
+      const ix = 4, iy = INPUT_Y, iw = r.W - 8, ih = INPUT_H;
+      // 框背景 + 焦點橙邊框(規格 §模式 A 元素規格 焦點邊框 2px)
+      r.ctx.fillStyle = r.C.FOCUS;
+      r.ctx.fillRect(ix, iy, iw, ih);
+      r.ctx.fillStyle = r.C.SURFACE;
+      r.ctx.fillRect(ix + 2, iy + 2, iw - 4, ih - 4);
+
+      // 已 commit 的待送文字(主色)+ inline preedit + 游標
+      const padX = 6;
+      const baseline = iy + ih / 2 + 5;
+      let tx = ix + padX;
+      const committed = this._compState.committed ?? '';
+      if (committed) {
+        r.ctx.font         = r.F.ZH_MD;
+        r.ctx.fillStyle    = r.C.TEXT;
+        r.ctx.textAlign    = 'left';
+        r.ctx.textBaseline = 'alphabetic';
+        r.ctx.fillText(committed, tx, baseline);
+        tx += r.ctx.measureText(committed).width;
+      }
+      const blink = Math.floor(now / 500) % 2 === 0;
+      tx += r.drawInlinePreedit(tx, baseline, this._compState.pending, {
+        cursorBlink: blink, height: ih - 4,
+      });
+
+      // 字數計數靠右下(規格 §模式 B 字數計數)
+      const len = countChars(committed) + countChars(this._compState.pending?.str ?? '');
+      const max = 240;
+      let cntColor = r.C.TEXT_DIM;
+      if (len >= max) cntColor = r.C.DANGER;
+      else if (len >= max * 0.8) cntColor = r.C.WARNING;
+      r.drawLabel(ix + iw - 4, iy + ih - 4, `${len}/${max}`, {
+        font: r.F.XS, color: cntColor, align: 'right',
+      });
+    }
+
+    // ── IME Bar(規格單列 18px,僅有候選字時顯示) ─────────────────
+    if (hasComp) {
       r.drawCompositionBar({
-        committedLeft:  this._compState.committed,
-        committedRight: '',
-        pending:        this._compState.pending,
         candidates:     this._compState.candidates,
         allCandidates:  this._compState.allCandidates,
         selectedAbs:    this._compState.selectedAbs,
         selIdx:         this._compState.selIdx,
-        mode:           this.mie.currentMode,
         picker:         this._compState.picker,
-        cursorBlink:    Math.floor(now / 500) % 2 === 0,
       });
     }
 
@@ -278,12 +319,8 @@ export class ChatScreen extends BaseScreen {
     });
 
     // ── Hint Bar(子模式)— 對齊 doc/ui/12-ime.md 鍵位行為表 ──────
-    // 訊息對話 = 模式 B 全螢幕編輯;OK 短按換行、長按送出。Composition Bar
-    // 顯示時(有候選字)由其自身佔位,此時 Hint Bar 暫不疊畫避免重疊。
-    const pendingLen = (this._compState.pending?.str ?? '').length;
-    const hasComp = pendingLen > 0
-                 || this._compState.candidates.length > 0
-                 || !!this._compState.picker?.active;
+    // 訊息對話 = 模式 B 全螢幕編輯;OK 短按換行、長按送出。
+    // 規格:IME Bar 與 Hint Bar 互斥(同位置 — 緊貼螢幕底)
     if (!hasComp) {
       r.drawHintBar([
         { key: 'OK',   label: '換行' },
@@ -292,6 +329,14 @@ export class ChatScreen extends BaseScreen {
         { key: 'MODE', label: '切 IME' },
       ]);
     }
+  }
+
+  /** 是否有 IME 內容(pending preedit / 候選字 / picker)— 決定 IME Bar 顯隱。 */
+  _compHasContent() {
+    const pendingLen = (this._compState?.pending?.str ?? '').length;
+    return pendingLen > 0
+        || (this._compState?.candidates?.length ?? 0) > 0
+        || !!this._compState?.picker?.active;
   }
 
   /**
@@ -449,4 +494,9 @@ export class ChatScreen extends BaseScreen {
 function truncatePreview(s, maxChars) {
   if (!s) return '';
   return s.length > maxChars ? s.slice(0, maxChars - 1) + '…' : s;
+}
+
+function countChars(s) {
+  if (!s) return 0;
+  return Array.from(s).length;
 }
