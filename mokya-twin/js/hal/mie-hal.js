@@ -61,6 +61,14 @@ export class MIE_Bridge extends EventTarget {
      *  OK-with-empty-composition can fire action:enter. */
     this._inputBeforePress = '';
 
+    /** 當前正在處理的鍵 keycode(供 _pollWasmState 過濾 stray space 用) */
+    this._currentKeycode = 0;
+
+    /** 注音 OK press 剛 commit 完候選字後,firmware 可能在後續 poll cycle
+     *  (含 mie_tick)再 emit 一個單獨的 ' ' commit;此 flag 跨 poll cycle
+     *  持續,直到下一個 ' ' 被消費或下一個非空格 commit 來臨才清除。 */
+    this._strayOkSpaceExpected = false;
+
     /** LRU persistence: debounced save handle and storage key. */
     this._lruSaveTimer = null;
     this._lruStorageKey = 'mie.lru.v1';
@@ -165,8 +173,10 @@ export class MIE_Bridge extends EventTarget {
       // OK was a candidate confirm(input was non-empty)or a send action
       //(input was empty)。
       this._inputBeforePress = this._readWasmStr(this._wasm.mie_input_ptr());
+      this._currentKeycode = keycode;
       this._wasm.mie_key(keycode, 1, this._now());
       this._pollWasmState();
+      this._currentKeycode = 0;
     } else {
       this._jsImpl.processKeyDown(keyEvent);
     }
@@ -195,8 +205,10 @@ export class MIE_Bridge extends EventTarget {
 
       // OK 跳過 WASM release edge,避免 stray space commit
       if (!isOk) {
+        this._currentKeycode = keycode;
         this._wasm.mie_key(keycode, 0, this._now());
         this._pollWasmState();
+        this._currentKeycode = 0;
       }
 
       // OK 在 press 時 input 為空 → 視為「送出已累積文字」
@@ -460,6 +472,12 @@ export class MIE_Bridge extends EventTarget {
   /** 引擎原生模式字串(WASM:中/EN/ABC;JS:ZHUYIN/ENGLISH/...)。 */
   get rawMode()     { return this._useWasm ? this.getModeStr() : (this._jsImpl.mode ?? ''); }
 
+  /** 是否在 注音 模式(WASM 或 JS impl 任一)。 */
+  _isZhuyinMode() {
+    const raw = this._useWasm ? this.getModeStr() : (this._jsImpl.mode ?? '');
+    return raw === '中' || raw === 'ZHUYIN';
+  }
+
   /**
    * Toggle CapsLock(對齊 doc/ui/12-ime.md MODE 長按)。
    *
@@ -654,17 +672,37 @@ export class MIE_Bridge extends EventTarget {
   _pollWasmState() {
     const wasm = this._wasm;
 
-    // Drain committed text
+    // Drain ALL queued commits in one cycle(loop until queue empty)。
+    // 規格 12-ime.md v1.1:OK 鍵在 注音 模式 commit 候選字後,firmware
+    // 會額外 queue 一個 stray ASCII space — 必須在這一輪 drain 內就過濾,
+    // 否則會殘留到下一次按鍵的 poll,使用者看到「連點 OK 才出現空格」。
+    //
+    // _strayOkSpaceExpected 為 instance 級旗標,跨 poll cycle 持續(stray
+    // space 也可能由 mie_tick 在後續 cycle 才被 emit),當下一個 ' ' 收到
+    // 時消費掉並清除;遇到任何非 ' ' commit 也清除(避免 staleness)。
     const commitPtr = wasm.malloc(512);
-    const n = wasm.mie_pop_commit(commitPtr, 512);
-    let committedNow = '';
-    if (n > 0) {
-      committedNow = this._readWasmStr(commitPtr);
-      this._pendingCommitted = (this._pendingCommitted ?? '') + committedNow;
-      this.dispatchEvent(new CustomEvent('composition:commit', { detail: { text: committedNow } }));
-      // Firmware's LruCache mutates on SmartZh candidate commits — schedule
-      // a debounced save so personalisation survives reloads.
+    while (true) {
+      const n = wasm.mie_pop_commit(commitPtr, 512);
+      if (n <= 0) break;
+      const text = this._readWasmStr(commitPtr);
+
+      // Stray space filter
+      if (text === ' ' && this._strayOkSpaceExpected && this._isZhuyinMode()) {
+        this._strayOkSpaceExpected = false;
+        continue;
+      }
+      this._strayOkSpaceExpected = false;
+
+      this._pendingCommitted = (this._pendingCommitted ?? '') + text;
+      this.dispatchEvent(new CustomEvent('composition:commit', { detail: { text } }));
       this._saveLru();
+
+      // OK press 剛 commit 了一個非空格字元 → 標記下一個收到的 ' ' 為 stray
+      if (this._currentKeycode === KEYCODE.OK
+          && this._inputBeforePress !== ''
+          && text !== ' ') {
+        this._strayOkSpaceExpected = true;
+      }
     }
     wasm.free(commitPtr);
 
