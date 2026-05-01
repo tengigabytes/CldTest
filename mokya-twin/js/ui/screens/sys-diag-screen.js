@@ -14,7 +14,9 @@
 import { BaseScreen } from '../screen-manager.js';
 import { defaultStatusOpts } from './_chrome.js';
 
-const PAGES = ['資源', 'CPU+任務', '螢幕'];
+const PAGES = ['資源', 'CPU+任務', '螢幕', '時間'];
+
+const TIME_ROWS = ['Year', 'Month', 'Day', 'Hour', 'Min', 'Sec', 'TZ', 'GNSS sync', 'Apply'];
 const PIX_NAMES  = ['RED', 'GREEN', 'BLUE', 'WHITE', 'BLACK'];
 const PIX_COLORS = ['#F85149', '#39D353', '#64D2FF', '#FFFFFF', '#000000'];
 
@@ -27,6 +29,19 @@ export class SysDiagScreen extends BaseScreen {
     this._fps = 30.0;
     this._lastFpsAt = 0;
     this._fpsCount = 0;
+
+    // Time editor (page 4) — UTC shadow
+    const now = new Date();
+    this._timeRow = 0;
+    this._tYear   = now.getUTCFullYear();
+    this._tMonth  = now.getUTCMonth() + 1;
+    this._tDay    = now.getUTCDate();
+    this._tHour   = now.getUTCHours();
+    this._tMin    = now.getUTCMinutes();
+    this._tSec    = now.getUTCSeconds();
+    this._tzMin   = 8 * 60;          // +08:00 default (Asia/Taipei)
+    this._gnssSync = false;
+    this._timeStatus = '↑/↓ 移動  ◀▶ ±1';
   }
 
   onEnter(from) {
@@ -59,7 +74,8 @@ export class SysDiagScreen extends BaseScreen {
 
     if (this._page === 0)      this._renderResources();
     else if (this._page === 1) this._renderCpu();
-    else                       this._renderScreen();
+    else if (this._page === 2) this._renderScreen();
+    else                       this._renderTime();
 
     r.drawHintBar([
       { key: '◀▶', label: '翻頁' },
@@ -135,6 +151,47 @@ export class SysDiagScreen extends BaseScreen {
     });
   }
 
+  _renderTime() {
+    const r = this.r;
+    const F = r.F.MONO_MD ?? r.F.ZH_SM;
+
+    // Live UTC + local clock at top
+    const tzMs = this._tzMin * 60 * 1000;
+    const utcDate = new Date(Date.UTC(
+      this._tYear, this._tMonth - 1, this._tDay,
+      this._tHour, this._tMin, this._tSec));
+    const localDate = new Date(utcDate.getTime() + tzMs);
+    const fmtUtc = (d) => `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')} ${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}:${String(d.getUTCSeconds()).padStart(2, '0')}`;
+    const tzSign = this._tzMin >= 0 ? '+' : '-';
+    const tzAbs  = Math.abs(this._tzMin);
+    r.drawLabel(4, 50, `UTC : ${fmtUtc(utcDate)}`, { font: F, color: r.C.TEXT });
+    r.drawLabel(4, 68, `本地: ${String(localDate.getUTCHours()).padStart(2, '0')}:${String(localDate.getUTCMinutes()).padStart(2, '0')}:${String(localDate.getUTCSeconds()).padStart(2, '0')}  (UTC${tzSign}${String((tzAbs / 60) | 0).padStart(2, '0')}:${String(tzAbs % 60).padStart(2, '0')})`, {
+      font: F, color: r.C.TEXT_DIM,
+    });
+
+    // Editor rows
+    const rows = [
+      `Year  : ${this._tYear}`,
+      `Month : ${String(this._tMonth).padStart(2, '0')}`,
+      `Day   : ${String(this._tDay).padStart(2, '0')}`,
+      `Hour  : ${String(this._tHour).padStart(2, '0')}  (UTC)`,
+      `Min   : ${String(this._tMin).padStart(2, '0')}`,
+      `Sec   : ${String(this._tSec).padStart(2, '0')}`,
+      `TZ    : ${tzSign}${String((tzAbs / 60) | 0).padStart(2, '0')}:${String(tzAbs % 60).padStart(2, '0')}`,
+      `GNSS sync : ${this._gnssSync ? 'ON' : 'OFF'}`,
+      `Apply (寫入 wall_clock)`,
+    ];
+    for (let i = 0; i < rows.length; i++) {
+      const focused = (i === this._timeRow);
+      r.drawLabel(4, 92 + i * 14 + 10,
+        `${focused ? '▶ ' : '  '}${rows[i]}`,
+        { font: F, color: focused ? r.C.FOCUS : r.C.TEXT });
+    }
+    r.drawLabel(4, 234, this._timeStatus, {
+      font: r.F.ZH_SM, color: r.C.TEXT_DIM,
+    });
+  }
+
   _renderPixtest() {
     const r = this.r;
     const ctx = r.ctx;
@@ -162,9 +219,40 @@ export class SysDiagScreen extends BaseScreen {
       return;
     }
 
+    // Time editor (page 3)— LEFT/RIGHT 改值,UP/DOWN 移 row
+    if (this._page === 3) {
+      const N = TIME_ROWS.length;
+      if (fn === 'UP')   { if (this._timeRow > 0) this._timeRow--; return; }
+      if (fn === 'DOWN') { if (this._timeRow + 1 < N) this._timeRow++; return; }
+      if (fn === 'LEFT' || fn === 'RIGHT') {
+        const dir = fn === 'LEFT' ? -1 : 1;
+        this._adjTime(this._timeRow, dir);
+        return;
+      }
+      if (fn === 'OK') {
+        if (this._timeRow === 7) this._gnssSync = !this._gnssSync;
+        else if (this._timeRow === 8) this._timeStatus = 'wall_clock 已寫入 (mock)';
+        return;
+      }
+      if (fn === 'BACK' || fn === 'FUNC') { this.goBack(); return; }
+      return;
+    }
+
     if (fn === 'LEFT')  { this._page = (this._page - 1 + PAGES.length) % PAGES.length; return; }
     if (fn === 'RIGHT') { this._page = (this._page + 1) % PAGES.length; return; }
     if (fn === 'UP' && this._page === 2) { this._pixtest = true; return; }
     if (fn === 'BACK' || fn === 'FUNC') { this.goBack(); return; }
+  }
+
+  _adjTime(row, dir) {
+    const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+    if (row === 0) this._tYear  = clamp(this._tYear + dir, 2020, 2099);
+    else if (row === 1) this._tMonth = ((this._tMonth - 1 + dir + 12) % 12) + 1;
+    else if (row === 2) this._tDay   = ((this._tDay - 1 + dir + 31) % 31) + 1;
+    else if (row === 3) this._tHour  = (this._tHour + dir + 24) % 24;
+    else if (row === 4) this._tMin   = (this._tMin  + dir + 60) % 60;
+    else if (row === 5) this._tSec   = (this._tSec  + dir + 60) % 60;
+    else if (row === 6) this._tzMin  = clamp(this._tzMin + dir * 30, -12 * 60, 14 * 60);
+    else if (row === 7) this._gnssSync = !this._gnssSync;
   }
 }
