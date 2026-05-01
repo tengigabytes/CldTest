@@ -21,6 +21,11 @@ import { defaultStatusOpts } from './_chrome.js';
 
 // 對齊 firmware/core1/src/ui/launcher_view.c s_tiles[](2d0b41c)。
 // HWDiag/SysDiag 是 commit becc3e5 新加的第 4 列。
+//
+// EMU vs firmware divergence:Power tile 在 firmware 是 placeholder
+// (target=VIEW_ID_COUNT,等 power button driver + Z-1 + IPC_CMD_SEND_SOS),
+// 但 EMU 已經有 sos-standby screen,直接導過去。row 3 col 2 仍保留 placeholder
+// 對齊 firmware 第 12 格。
 export const MENU_ITEMS = [
   { icon: 'chat',     label: '訊息',     target: 'messages'      },
   { icon: 'mesh-cfg', label: '頻道',     target: 'mesh-channels' },
@@ -30,8 +35,7 @@ export const MENU_ITEMS = [
   { icon: 'settings', label: '工具',     target: 'tools'         },
   { icon: 'mesh-cfg', label: '設定',     target: 'settings'      },
   { icon: 'connect',  label: '我的',     target: 'my-node'       },
-  { icon: 'battery',  label: 'Power',    target: '__placeholder', placeholder: true,
-    toast: 'SOS app 規劃中 (待 power button + Z-1)' },
+  { icon: 'battery',  label: 'Power',    target: 'sos-standby'   },
   { icon: 'sensors',  label: 'HWDiag',   target: 'hw-diag'       },
   { icon: 'settings', label: 'SysDiag',  target: 'sys-diag'      },
   { icon: 'battery',  label: '—',        target: '__placeholder', placeholder: true,
