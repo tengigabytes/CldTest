@@ -39,6 +39,7 @@ const PAGES = [
   '感測器',
   '充電器讀值',
   '充電控制',
+  '通知設定',
 ];
 
 const FIX_RATES = ['OFF', '1Hz', '2Hz', '5Hz', '10Hz'];
@@ -104,6 +105,38 @@ export class HwDiagScreen extends BaseScreen {
     this._kpTick   = 0;
     this._kpMatrix = new Array(6 * 6).fill(0);
     this._kpLog    = [];
+
+    // Charge control (page 13)
+    this._chgFocus = 0;
+    this._chgEn    = true;
+    this._chgHiz   = false;
+    this._chgWdIdx = 1;            // OFF / 50s / 100s / 200s
+    this._chgArmed = false;        // SYSRESET 兩段確認
+    this._chgWdLabels = ['OFF', '50s', '100s', '200s'];
+
+    // Notification (page 14)
+    this._notifSub = 0;            // 0=Global / 1=Channels / 2=PerConv
+    this._notifRow = 0;
+    this._notif = {
+      master: true,
+      dnd:    false,
+      quietEn:    false,
+      quietStart: 22 * 60,
+      quietEnd:    7 * 60,
+      vibInt: 50,
+      events: ['VIB','SIL','SIL','OFF','OFF','VIB','OFF','VIB'],   // DM/BC/ACK/NewNode/Charge/LowBatt/KeyPress/SOS
+      channels: ['DEF','DEF','DEF','DEF','DEF','DEF','DEF','DEF'], // 8 ch overrides
+      perConv:  [
+        { id: 0, mode: 'DEF' },
+        { id: 0, mode: 'DEF' },
+        { id: 0, mode: 'DEF' },
+        { id: 0, mode: 'DEF' },
+        { id: 0, mode: 'DEF' },
+        { id: 0, mode: 'DEF' },
+        { id: 0, mode: 'DEF' },
+        { id: 0, mode: 'DEF' },
+      ],
+    };
   }
 
   onEnter(from) {
@@ -134,7 +167,7 @@ export class HwDiagScreen extends BaseScreen {
 
     // Dispatch page renderer
     const fn = ['_p1', '_p2', '_p3', '_p4', '_p5', '_p6', '_p7',
-                '_p8', '_p9', '_p10', '_p11', '_p12', '_p13'][this._page];
+                '_p8', '_p9', '_p10', '_p11', '_p12', '_p13', '_p14'][this._page];
     this[fn](r);
 
     r.drawHintBar([
@@ -403,28 +436,163 @@ export class HwDiagScreen extends BaseScreen {
     }
   }
 
-  // ── Page 13: 充電控制(placeholder)──────────────────────────────
+  // ── Page 13: 充電控制(commit e016b31, Phase 4.3)─────────────────
   _p13(r) {
-    r.drawLabel(r.W / 2, 130, '尚未實作（Phase 3/4 待補）', {
-      font: r.F.ZH_MD, color: r.C.TEXT_DIM, align: 'center',
+    const t = Date.now() / 1000;
+    const vbus = 5040 + (Math.sin(t * 0.2) * 8) | 0;
+    const vbat = 3920 + (Math.sin(t * 0.13) * 12) | 0;
+
+    // 3 status mirror lines
+    r.drawLabel(4, 50, `VBUS ${vbus} mV  VBAT ${vbat} mV`, {
+      font: r.F.MONO_MD ?? r.F.ZH_SM, color: r.C.TEXT_DIM,
     });
+    r.drawLabel(4, 70, `CHG=Taper  VBUS=USB-Adap`, {
+      font: r.F.MONO_MD ?? r.F.ZH_SM, color: r.C.TEXT_DIM,
+    });
+    r.drawLabel(4, 90, `WD ${this._chgWdLabels[this._chgWdIdx]}  exp=0  i2c_fail=0`, {
+      font: r.F.MONO_MD ?? r.F.ZH_SM, color: r.C.TEXT_DIM,
+    });
+
+    // 4 control widgets
+    const widgets = [
+      `充電開關 (EN_CHG)  : ${this._chgEn ? 'ON' : 'OFF'}`,
+      `HIZ 模式           : ${this._chgHiz ? 'ON' : 'OFF'}`,
+      `WD 視窗            : ${this._chgWdLabels[this._chgWdIdx]}`,
+      this._chgArmed
+        ? `SYSRESET (BATFET 12.5s)  [OK 確認]`
+        : `SYSRESET (BATFET 12.5s)`,
+    ];
+    for (let i = 0; i < widgets.length; i++) {
+      const focused = (i === this._chgFocus);
+      const armed = (i === 3 && this._chgArmed);
+      r.drawLabel(4, 120 + i * 20 + 10,
+        `${focused ? '▶ ' : '  '}${widgets[i]}`,
+        { font: r.F.ZH_SM, color: armed ? r.C.WARNING : (focused ? r.C.FOCUS : r.C.TEXT) });
+    }
+    r.drawLabel(4, 218, '↑/↓ 移動  OK 切換/確認', {
+      font: r.F.ZH_SM, color: r.C.TEXT_DIM,
+    });
+  }
+
+  // ── Page 14: 通知設定(commit 5a0a392)────────────────────────────
+  _p14(r) {
+    const subs = ['Global Defaults', 'Channel Override', 'Conversation Override'];
+    r.drawLabel(4, 50, `[NOTIF ${this._notifSub + 1}/3] ${subs[this._notifSub]}`, {
+      font: r.F.ZH_SM, color: r.C.FOCUS,
+    });
+
+    const rows = this._notifRows();
+    for (let i = 0; i < rows.length; i++) {
+      const focused = (i === this._notifRow);
+      r.drawLabel(4, 70 + i * 14 + 10,
+        `${focused ? '▶ ' : '  '}${rows[i]}`,
+        { font: r.F.MONO_MD ?? r.F.ZH_SM, color: focused ? r.C.FOCUS : r.C.TEXT });
+    }
+    r.drawLabel(4, 218, '↑/↓ 移動  OK 切換  FUNC 換頁', {
+      font: r.F.ZH_SM, color: r.C.TEXT_DIM,
+    });
+  }
+
+  _notifRows() {
+    const n = this._notif;
+    if (this._notifSub === 0) {
+      const events = ['DM', 'Broadcast', 'ACK', 'NewNode', 'Charge', 'LowBatt', 'KeyPress', 'SOS'];
+      const quietStr = n.quietEn
+        ? `Quiet ${this._fmtMin(n.quietStart)}-${this._fmtMin(n.quietEnd)}`
+        : `Quiet Hours : OFF`;
+      const rows = [
+        `Master      : ${n.master ? 'ON' : 'OFF'}`,
+        `DnD         : ${n.dnd ? 'ON' : 'OFF'}`,
+        quietStr,
+        `VibInt      : ${n.vibInt}%`,
+      ];
+      for (let i = 0; i < events.length; i++) {
+        rows.push(`${events[i].padEnd(11)} : ${n.events[i]}`);
+      }
+      return rows;
+    }
+    if (this._notifSub === 1) {
+      return n.channels.map((m, i) => `Ch ${i} (DM/BC) : ${m}`);
+    }
+    return n.perConv.map((p, i) =>
+      p.id === 0 ? `[empty ${i}]` : `!${p.id.toString(16).padStart(8, '0')} : ${p.mode}`);
+  }
+
+  _fmtMin(m) {
+    return `${String((m / 60) | 0).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
   }
 
   // ── Key dispatch ─────────────────────────────────────────────────
   handleKeyTap({ key }) {
     const fn = key.fn;
+    // FUNC 在 page 14(通知)切 sub-page,其他頁回 launcher
+    if (fn === 'FUNC') {
+      if (this._page === 13) {
+        this._notifSub = (this._notifSub + 1) % 3;
+        this._notifRow = 0;
+        return;
+      }
+      this.goBack(); return;
+    }
     if (fn === 'LEFT')  { this._page = (this._page - 1 + PAGES.length) % PAGES.length; return; }
     if (fn === 'RIGHT') { this._page = (this._page + 1) % PAGES.length; return; }
-    if (fn === 'BACK' || fn === 'FUNC') { this.goBack(); return; }
+    if (fn === 'BACK')  { this.goBack(); return; }
     // page-specific handlers
-    if (this._page === 0)      this._k1(fn);
-    else if (this._page === 2) this._k3(fn);
-    else if (this._page === 3) this._k4(fn);
-    else if (this._page === 4) this._k5(fn);
-    else if (this._page === 5) this._k6(fn);
-    else if (this._page === 6) this._k7(fn);
-    else if (this._page === 7) this._k8(fn);
-    else if (this._page === 8) this._k9(fn);
+    if (this._page === 0)       this._k1(fn);
+    else if (this._page === 2)  this._k3(fn);
+    else if (this._page === 3)  this._k4(fn);
+    else if (this._page === 4)  this._k5(fn);
+    else if (this._page === 5)  this._k6(fn);
+    else if (this._page === 6)  this._k7(fn);
+    else if (this._page === 7)  this._k8(fn);
+    else if (this._page === 8)  this._k9(fn);
+    else if (this._page === 12) this._k13(fn);
+    else if (this._page === 13) this._k14(fn);
+  }
+
+  _k13(fn) {
+    const N = 4;
+    if (fn === 'UP')   { if (this._chgFocus > 0) this._chgFocus--; this._chgArmed = false; return; }
+    if (fn === 'DOWN') { if (this._chgFocus + 1 < N) this._chgFocus++; this._chgArmed = false; return; }
+    if (fn === 'OK') {
+      const f = this._chgFocus;
+      if (f === 0) this._chgEn = !this._chgEn;
+      else if (f === 1) this._chgHiz = !this._chgHiz;
+      else if (f === 2) this._chgWdIdx = (this._chgWdIdx + 1) % 4;
+      else if (f === 3) {
+        if (this._chgArmed) {
+          this._chgArmed = false;
+          // SYSRESET fired (mock)
+        } else {
+          this._chgArmed = true;
+        }
+      }
+    }
+  }
+
+  _k14(fn) {
+    const rows = this._notifRows();
+    const N = rows.length;
+    if (fn === 'UP')   { if (this._notifRow > 0) this._notifRow--; return; }
+    if (fn === 'DOWN') { if (this._notifRow + 1 < N) this._notifRow++; return; }
+    if (fn !== 'OK') return;
+    const cycle3 = (m) => ({ OFF: 'SIL', SIL: 'VIB', VIB: 'OFF' }[m] ?? 'OFF');
+    const cycle4 = (m) => ({ OFF: 'SIL', SIL: 'VIB', VIB: 'DEF', DEF: 'OFF' }[m] ?? 'DEF');
+    const r = this._notifRow;
+    const n = this._notif;
+    if (this._notifSub === 0) {
+      if (r === 0)      n.master = !n.master;
+      else if (r === 1) n.dnd    = !n.dnd;
+      else if (r === 2) n.quietEn = !n.quietEn;
+      else if (r === 3) n.vibInt = (n.vibInt + 25) % 125;
+      else              n.events[r - 4] = cycle3(n.events[r - 4]);
+    } else if (this._notifSub === 1) {
+      n.channels[r] = cycle4(n.channels[r]);
+    } else {
+      const p = n.perConv[r];
+      if (p.id === 0) p.id = 0xa3000000 + r;   // mock claim
+      p.mode = cycle4(p.mode);
+    }
   }
 
   _k1(fn) { if (fn === 'UP') this._nmeaPaused = !this._nmeaPaused; }
