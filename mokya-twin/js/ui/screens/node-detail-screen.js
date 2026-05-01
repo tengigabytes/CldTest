@@ -231,8 +231,14 @@ export class NodeDetailScreen extends BaseScreen {
       ...(n.ack_history        ?? []).map(e => ({ kind: 'ak', t_ms: e.t_ms, e })),
     ].sort((a, b) => b.t_ms - a.t_ms);
 
-    const ROW_H = 14;
-    const VISIBLE = 4;
+    // ROW_H must be ≥ 18 — MIE Unifont renders 16 px tall glyphs regardless
+    // of the declared font size, so smaller rows make adjacent glyphs overlap.
+    // VISIBLE=3 fits cleanly between section header (y=162) and hint at y=235:
+    //   row 0 baseline 180 → glyph y=167..183
+    //   row 1 baseline 198 → glyph y=185..201
+    //   row 2 baseline 216 → glyph y=203..219
+    const ROW_H = 18;
+    const VISIBLE = 3;
     const startY = 168;
     const top = Math.max(0, Math.min(this._histScroll, events.length - VISIBLE));
     const rows = Math.min(VISIBLE, events.length - top);
@@ -243,20 +249,15 @@ export class NodeDetailScreen extends BaseScreen {
       if (ev.kind === 'tr') {
         const e = ev.e;
         const path = e.hops.map(h => h.replace(/^!/, '')).join('→');
-        r.drawLabel(8, y + 12, `TR ${rel}`, { font: r.F.XS, color: r.C.GREEN });
-        r.drawLabel(50, y + 12, path, {
-          font: r.F.XS, color: r.C.TEXT, maxWidth: r.W - 60,
-        });
+        r.drawLabel(8,  y + 13, `TR ${rel}`, { font: r.F.XS, color: r.C.GREEN });
+        r.drawLabel(60, y + 13, path,        { font: r.F.XS, color: r.C.TEXT, maxWidth: r.W - 70 });
       } else {
-        // ACK row: latency from sendtext --ack; the ACK comes from the
-        // first hop only, so for hops_away≥2 it's not an end-to-end
-        // confirmation. Annotate accordingly.
         const e = ev.e;
         const ico = e.ok ? '✓' : '✗';
         const lat = e.ok ? `${e.latency_ms} ms` : '逾時';
         const hopNote = e.hop > 1 ? ` (hop ${e.hop})` : '';
-        r.drawLabel(8, y + 12, `AK ${rel}`, { font: r.F.XS, color: e.ok ? r.C.GREEN : r.C.DANGER });
-        r.drawLabel(50, y + 12, `${ico} ${lat}${hopNote}`, {
+        r.drawLabel(8,  y + 13, `AK ${rel}`, { font: r.F.XS, color: e.ok ? r.C.GREEN : r.C.DANGER });
+        r.drawLabel(60, y + 13, `${ico} ${lat}${hopNote}`, {
           font: r.F.XS, color: e.ok ? r.C.TEXT : r.C.DANGER,
         });
       }
